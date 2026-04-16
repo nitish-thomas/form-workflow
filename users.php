@@ -101,6 +101,7 @@ require_once __DIR__ . '/includes/header.php';
     </div>
 
     <?php else: ?>
+    <div class="overflow-x-auto">
     <table class="min-w-full divide-y divide-gray-100">
         <thead class="bg-gray-50">
             <tr>
@@ -209,6 +210,7 @@ require_once __DIR__ . '/includes/header.php';
             <?php endforeach; ?>
         </tbody>
     </table>
+    </div><!-- /overflow-x-auto -->
     <?php endif; ?>
 
 </div>

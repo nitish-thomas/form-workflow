@@ -35,6 +35,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($_SERVER['HTTP_X_REQUESTED_W
                 echo json_encode(['ok' => true, 'recipient' => $result[0] ?? null]);
                 break;
 
+            case 'add_field_key':
+                $fieldKey = trim($input['field_key'] ?? '');
+                if (!$fieldKey) throw new Exception('Field key is required');
+                $result = $sb->from('stage_recipients')->insert([
+                    'stage_id'  => $stageId,
+                    'field_key' => $fieldKey,
+                ]);
+                echo json_encode(['ok' => true, 'recipient' => $result[0] ?? null]);
+                break;
+
             case 'remove':
                 $sb->from('stage_recipients')->eq('id', $input['id'])->delete();
                 echo json_encode(['ok' => true]);
@@ -75,19 +85,21 @@ $groupMap = [];
 foreach ($allGroups as $g) { $groupMap[$g['id']] = $g; }
 
 // Separate recipients by type
-$userRecipients  = [];
-$groupRecipients = [];
-$assignedUserIds = [];
-$assignedGroupIds = [];
+$userRecipients      = [];
+$groupRecipients     = [];
+$fieldKeyRecipients  = [];
+$assignedUserIds     = [];
+$assignedGroupIds    = [];
 
 foreach ($recipients as $r) {
     if (!empty($r['user_id'])) {
         $userRecipients[] = $r;
         $assignedUserIds[] = $r['user_id'];
-    }
-    if (!empty($r['group_id'])) {
+    } elseif (!empty($r['group_id'])) {
         $groupRecipients[] = $r;
         $assignedGroupIds[] = $r['group_id'];
+    } elseif (!empty($r['field_key'])) {
+        $fieldKeyRecipients[] = $r;
     }
 }
 
@@ -117,7 +129,7 @@ require_once __DIR__ . '/includes/header.php';
     </p>
 </div>
 
-<div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
 
     <!-- ── Individual Users ─────────────────────────────── -->
     <div class="bg-white rounded-xl border border-gray-200 p-5">
@@ -244,6 +256,59 @@ require_once __DIR__ . '/includes/header.php';
     </div>
 </div>
 
+<!-- ── Dynamic Field Recipients ────────────────────────── -->
+<div class="bg-white rounded-xl border border-gray-200 p-5">
+    <div class="flex items-start justify-between mb-1">
+        <h2 class="text-base font-semibold text-gray-900">Dynamic Recipients (Form Field)</h2>
+        <span class="text-xs text-gray-400 mt-0.5"><?= count($fieldKeyRecipients) ?> assigned</span>
+    </div>
+    <p class="text-xs text-gray-500 mb-4">
+        Enter the exact name of a form field whose value is an email address.
+        At submission time, the workflow will look up that email and send the stage notification to that person.
+        <strong>The recipient must have logged into the portal at least once</strong> before the submission is processed.
+    </p>
+
+    <!-- Add field key form -->
+    <div class="flex gap-2 mb-4">
+        <input id="add-field-key-input" type="text"
+               placeholder="e.g. Manager Email"
+               class="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none">
+        <button onclick="addFieldKey()"
+                class="px-4 py-2 bg-brand-600 text-white text-sm font-medium rounded-lg hover:bg-brand-700 transition-colors shrink-0">
+            Add
+        </button>
+    </div>
+
+    <!-- Field key list -->
+    <div id="field-key-recipients" class="space-y-2">
+        <?php if (empty($fieldKeyRecipients)): ?>
+            <p class="text-sm text-gray-400 py-4 text-center" id="no-field-keys-msg">No dynamic recipients assigned</p>
+        <?php endif; ?>
+        <?php foreach ($fieldKeyRecipients as $r): ?>
+            <div class="flex items-center justify-between p-3 bg-gray-50 rounded-lg" id="recip-<?= $r['id'] ?>">
+                <div class="flex items-center gap-3">
+                    <div class="w-8 h-8 rounded-full bg-violet-100 flex items-center justify-center text-violet-700">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                  d="M7 20l4-16m2 16l4-16M6 9h14M4 15h14"/>
+                        </svg>
+                    </div>
+                    <div>
+                        <p class="text-sm font-medium text-gray-900"><?= htmlspecialchars($r['field_key']) ?></p>
+                        <p class="text-xs text-gray-500">Resolved from form field at submission time</p>
+                    </div>
+                </div>
+                <button onclick="removeRecipient('<?= $r['id'] ?>')"
+                        class="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors" title="Remove">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                    </svg>
+                </button>
+            </div>
+        <?php endforeach; ?>
+    </div>
+</div>
+
 <script>
 const stageId = '<?= htmlspecialchars($stageId) ?>';
 const formId  = '<?= htmlspecialchars($formId) ?>';
@@ -271,6 +336,20 @@ async function addGroup() {
     try {
         await api(endpoint, { action: 'add_group', group_id: groupId });
         showToast('Group added');
+        setTimeout(() => location.reload(), 400);
+    } catch (e) {
+        showToast(e.message, 'error');
+    }
+}
+
+async function addFieldKey() {
+    const input = document.getElementById('add-field-key-input');
+    const fieldKey = input.value.trim();
+    if (!fieldKey) { showToast('Enter a field name first', 'error'); return; }
+
+    try {
+        await api(endpoint, { action: 'add_field_key', field_key: fieldKey });
+        showToast('Dynamic recipient added');
         setTimeout(() => location.reload(), 400);
     } catch (e) {
         showToast(e.message, 'error');

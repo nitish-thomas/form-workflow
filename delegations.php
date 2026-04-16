@@ -206,6 +206,7 @@ function userChip(array $u, string $colorClass = 'bg-brand-50 text-brand-700'): 
 <?php else: ?>
 <!-- Delegations table -->
 <div class="bg-white rounded-xl border border-gray-200 overflow-hidden">
+    <div class="overflow-x-auto">
     <table class="min-w-full divide-y divide-gray-200">
         <thead class="bg-gray-50">
             <tr>
@@ -346,6 +347,7 @@ function userChip(array $u, string $colorClass = 'bg-brand-50 text-brand-700'): 
             <?php endforeach; ?>
         </tbody>
     </table>
+    </div><!-- /overflow-x-auto -->
 </div>
 <?php endif; ?>
 

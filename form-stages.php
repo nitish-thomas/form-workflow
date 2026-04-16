@@ -66,7 +66,29 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($_SERVER['HTTP_X_REQUESTED_W
                 break;
 
             case 'delete':
-                $sb->from('form_stages')->eq('id', $input['id'])->delete();
+                $stageToDelete = $input['id'];
+
+                // Check for submission history (cannot cascade-delete — historical data)
+                $submissionHistory = $sb->from('submission_stages')
+                    ->select('id')->eq('stage_id', $stageToDelete)->limit(1)->execute();
+                if (!empty($submissionHistory)) {
+                    throw new Exception('This stage has submission history and cannot be deleted. Archive the form instead, or contact your administrator.');
+                }
+
+                // Cascade: remove stage recipients first
+                $sb->from('stage_recipients')->eq('stage_id', $stageToDelete)->delete();
+
+                // Cascade: remove routing rules that point TO this stage as a target
+                $sb->from('routing_rules')->eq('target_stage_id', $stageToDelete)->delete();
+
+                // Cascade: remove routing rules that belong to this stage
+                $sb->from('routing_rules')->eq('stage_id', $stageToDelete)->delete();
+
+                // Now delete the stage itself
+                $deleteResult = $sb->from('form_stages')->eq('id', $stageToDelete)->delete();
+                if ($deleteResult === null) {
+                    throw new Exception('Failed to delete stage. It may still be referenced by other records.');
+                }
                 echo json_encode(['ok' => true]);
                 break;
 
