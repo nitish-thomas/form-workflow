@@ -16,14 +16,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($_SERVER['HTTP_X_REQUESTED_W
     try {
         switch ($action) {
             case 'create':
+                $title = trim($input['title'] ?? '');
+                if (!$title) throw new Exception('Title is required');
                 $result = $sb->from('forms')->insert([
-                    'title'          => trim($input['title'] ?? ''),
+                    'title'          => $title,
                     'description'    => trim($input['description'] ?? ''),
                     'created_by'     => $currentUser['id'],
                     'allow_resubmit' => !empty($input['allow_resubmit']),
                     'status'         => $input['status'] ?? 'draft',
+                    'google_form_id' => trim($input['google_form_id'] ?? '') ?: null,
                 ]);
-                echo json_encode(['ok' => true, 'form' => $result[0] ?? null]);
+                if (!$result || empty($result[0])) throw new Exception('Database insert failed — check that all migrations have been run in Supabase.');
+                echo json_encode(['ok' => true, 'form' => $result[0]]);
                 break;
 
             case 'update':
@@ -34,8 +38,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($_SERVER['HTTP_X_REQUESTED_W
                         'description'    => trim($input['description'] ?? ''),
                         'allow_resubmit' => !empty($input['allow_resubmit']),
                         'status'         => $input['status'] ?? 'draft',
+                        'google_form_id' => trim($input['google_form_id'] ?? '') ?: null,
                     ]);
-                echo json_encode(['ok' => true, 'form' => $result[0] ?? null]);
+                if (!$result || empty($result[0])) throw new Exception('Database update failed — check that all migrations have been run in Supabase.');
+                echo json_encode(['ok' => true, 'form' => $result[0]]);
                 break;
 
             case 'delete':
@@ -113,6 +119,15 @@ require_once __DIR__ . '/includes/header.php';
                                     Resubmit OK
                                 </span>
                             <?php endif; ?>
+                            <?php if (!empty($form['google_form_id'])): ?>
+                                <span class="px-2 py-0.5 rounded-full text-xs font-medium bg-green-50 text-green-700" title="Google Form ID: <?= htmlspecialchars($form['google_form_id']) ?>">
+                                    ⬡ Form linked
+                                </span>
+                            <?php else: ?>
+                                <span class="px-2 py-0.5 rounded-full text-xs font-medium bg-amber-50 text-amber-700">
+                                    No form linked
+                                </span>
+                            <?php endif; ?>
                         </div>
                         <?php if (!empty($form['description'])): ?>
                             <p class="mt-1 text-sm text-gray-500 line-clamp-2"><?= htmlspecialchars($form['description']) ?></p>
@@ -186,6 +201,13 @@ require_once __DIR__ . '/includes/header.php';
                               class="w-full px-3 py-2.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none resize-none"></textarea>
                 </div>
 
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Google Form ID</label>
+                    <input id="form-google-id" type="text" placeholder="e.g. 1FAIpQLSc…"
+                           class="w-full px-3 py-2.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none font-mono">
+                    <p class="mt-1 text-xs text-gray-400">Found in the Google Form URL between <code>/d/</code> and <code>/edit</code>. Paste the full URL and the ID will be extracted automatically.</p>
+                </div>
+
                 <div class="grid grid-cols-2 gap-4">
                     <div>
                         <label class="block text-sm font-medium text-gray-700 mb-1">Status</label>
@@ -229,6 +251,7 @@ function openFormModal(form = null) {
         document.getElementById('form-desc').value = form.description || '';
         document.getElementById('form-status').value = form.status || 'draft';
         document.getElementById('form-resubmit').checked = !!form.allow_resubmit;
+        document.getElementById('form-google-id').value = form.google_form_id || '';
     } else {
         document.getElementById('modal-title').textContent = 'New Form';
         document.getElementById('form-id').value = '';
@@ -236,9 +259,18 @@ function openFormModal(form = null) {
         document.getElementById('form-desc').value = '';
         document.getElementById('form-status').value = 'draft';
         document.getElementById('form-resubmit').checked = false;
+        document.getElementById('form-google-id').value = '';
     }
     setTimeout(() => document.getElementById('form-title').focus(), 100);
 }
+
+// Auto-extract the Form ID if someone pastes a full Google Forms URL
+document.getElementById('form-google-id').addEventListener('input', function () {
+    const val = this.value.trim();
+    // Match the ID between /d/ and the next /
+    const match = val.match(/\/d\/([a-zA-Z0-9_-]+)/);
+    if (match) this.value = match[1];
+});
 
 function closeFormModal() {
     document.getElementById('form-modal').classList.add('hidden');
@@ -256,6 +288,7 @@ async function saveForm() {
         description:    document.getElementById('form-desc').value.trim(),
         status:         document.getElementById('form-status').value,
         allow_resubmit: document.getElementById('form-resubmit').checked,
+        google_form_id: document.getElementById('form-google-id').value.trim() || null,
     };
 
     try {

@@ -94,10 +94,14 @@ function navClass(string $page, string $active): string {
 
                 <!-- Nav links -->
                 <div class="flex items-center gap-1">
-                    <a href="/dashboard.php" class="<?= navClass('dashboard', $activePage) ?>">Dashboard</a>
-                    <a href="/forms.php"     class="<?= navClass('forms',     $activePage) ?>">Forms</a>
-                    <a href="/groups.php"    class="<?= navClass('groups',    $activePage) ?>">Groups</a>
+                    <a href="/dashboard.php"    class="<?= navClass('dashboard',    $activePage) ?>">Dashboard</a>
+                    <a href="/submissions.php" class="<?= navClass('submissions', $activePage) ?>">Submissions</a>
+                    <?php if (($currentUser['role'] ?? '') === 'admin'): ?>
+                    <a href="/forms.php"       class="<?= navClass('forms',       $activePage) ?>">Forms</a>
+                    <a href="/groups.php"      class="<?= navClass('groups',      $activePage) ?>">Groups</a>
                     <a href="/delegations.php" class="<?= navClass('delegations', $activePage) ?>">Delegations</a>
+                    <a href="/users.php"       class="<?= navClass('users',       $activePage) ?>">Users</a>
+                    <?php endif; ?>
                 </div>
             </div>
 

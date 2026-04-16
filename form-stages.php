@@ -24,25 +24,45 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($_SERVER['HTTP_X_REQUESTED_W
                     ->eq('form_id', $formId)->order('stage_order', false)->limit(1)->execute();
                 $nextOrder = empty($existing) ? 1 : ($existing[0]['stage_order'] + 1);
 
+                $stageName = trim($input['stage_name'] ?? '');
+                if (!$stageName) throw new Exception('Stage name is required');
+
+                $reminderDays   = isset($input['reminder_days'])   && $input['reminder_days']   !== '' ? (int)$input['reminder_days']   : null;
+                $escalationDays = isset($input['escalation_days']) && $input['escalation_days'] !== '' ? (int)$input['escalation_days'] : null;
+
                 $result = $sb->from('form_stages')->insert([
-                    'form_id'       => $formId,
-                    'stage_order'   => $nextOrder,
-                    'stage_name'    => trim($input['stage_name'] ?? 'New Stage'),
-                    'stage_type'    => $input['stage_type'] ?? 'approval',
-                    'approval_mode' => $input['approval_mode'] ?? 'any',
+                    'form_id'         => $formId,
+                    'stage_order'     => $nextOrder,
+                    'stage_name'      => $stageName,
+                    'name'            => $stageName, // keep original column populated
+                    'stage_type'      => $input['stage_type'] ?? 'approval',
+                    'approval_mode'   => $input['approval_mode'] ?? 'any',
+                    'reminder_days'   => $reminderDays,
+                    'escalation_days' => $escalationDays,
                 ]);
-                echo json_encode(['ok' => true, 'stage' => $result[0] ?? null]);
+                if (!$result || empty($result[0])) throw new Exception('Database insert failed — run migration 2026-04-16_phase3c_stages_schema_align.sql in Supabase.');
+                echo json_encode(['ok' => true, 'stage' => $result[0]]);
                 break;
 
             case 'update':
+                $stageName = trim($input['stage_name'] ?? '');
+                if (!$stageName) throw new Exception('Stage name is required');
+
+                $reminderDays   = isset($input['reminder_days'])   && $input['reminder_days']   !== '' ? (int)$input['reminder_days']   : null;
+                $escalationDays = isset($input['escalation_days']) && $input['escalation_days'] !== '' ? (int)$input['escalation_days'] : null;
+
                 $result = $sb->from('form_stages')
                     ->eq('id', $input['id'])
                     ->update([
-                        'stage_name'    => trim($input['stage_name'] ?? ''),
-                        'stage_type'    => $input['stage_type'] ?? 'approval',
-                        'approval_mode' => $input['approval_mode'] ?? 'any',
+                        'stage_name'      => $stageName,
+                        'name'            => $stageName,
+                        'stage_type'      => $input['stage_type'] ?? 'approval',
+                        'approval_mode'   => $input['approval_mode'] ?? 'any',
+                        'reminder_days'   => $reminderDays,
+                        'escalation_days' => $escalationDays,
                     ]);
-                echo json_encode(['ok' => true, 'stage' => $result[0] ?? null]);
+                if (!$result || empty($result[0])) throw new Exception('Database update failed.');
+                echo json_encode(['ok' => true, 'stage' => $result[0]]);
                 break;
 
             case 'delete':
@@ -162,6 +182,12 @@ require_once __DIR__ . '/includes/header.php';
                         <?php if ($stage['stage_type'] === 'approval'): ?>
                             · <?= $stage['approval_mode'] === 'all' ? 'All must approve' : 'Any one approves' ?>
                         <?php endif; ?>
+                        <?php if (!empty($stage['reminder_days'])): ?>
+                            · <span class="text-amber-600">Reminder: <?= (int)$stage['reminder_days'] ?>d</span>
+                        <?php endif; ?>
+                        <?php if (!empty($stage['escalation_days'])): ?>
+                            · <span class="text-red-500">Escalate: <?= (int)$stage['escalation_days'] ?>d</span>
+                        <?php endif; ?>
                     </p>
                 </div>
 
@@ -232,6 +258,24 @@ require_once __DIR__ . '/includes/header.php';
                     </select>
                     <p class="mt-1 text-xs text-gray-400" id="mode-hint">Stage advances when any single recipient approves.</p>
                 </div>
+
+                <div id="reminder-escalation-group" class="border-t border-gray-100 pt-4">
+                    <p class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Reminders &amp; Escalation <span class="font-normal normal-case text-gray-400">(optional)</span></p>
+                    <div class="grid grid-cols-2 gap-3">
+                        <div>
+                            <label class="block text-xs font-medium text-gray-600 mb-1">Reminder every (days)</label>
+                            <input id="stage-reminder-days" type="number" min="1" max="365" placeholder="e.g. 3"
+                                   class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none">
+                            <p class="mt-1 text-xs text-gray-400">Re-notify pending approvers</p>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-medium text-gray-600 mb-1">Escalate after (days)</label>
+                            <input id="stage-escalation-days" type="number" min="1" max="365" placeholder="e.g. 7"
+                                   class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none">
+                            <p class="mt-1 text-xs text-gray-400">Alert admin if overdue</p>
+                        </div>
+                    </div>
+                </div>
             </div>
             <div class="px-6 py-4 bg-gray-50 rounded-b-2xl flex justify-end gap-3">
                 <button onclick="closeStageModal()"
@@ -282,12 +326,16 @@ function openStageModal(stage = null) {
         document.getElementById('stage-name').value = stage.stage_name || '';
         document.getElementById('stage-type').value = stage.stage_type || 'approval';
         document.getElementById('stage-approval-mode').value = stage.approval_mode || 'any';
+        document.getElementById('stage-reminder-days').value   = stage.reminder_days   ?? '';
+        document.getElementById('stage-escalation-days').value = stage.escalation_days ?? '';
     } else {
         document.getElementById('stage-modal-title').textContent = 'Add Stage';
         document.getElementById('stage-id').value = '';
         document.getElementById('stage-name').value = '';
         document.getElementById('stage-type').value = 'approval';
         document.getElementById('stage-approval-mode').value = 'any';
+        document.getElementById('stage-reminder-days').value   = '';
+        document.getElementById('stage-escalation-days').value = '';
     }
     toggleApprovalMode();
     setTimeout(() => document.getElementById('stage-name').focus(), 100);
@@ -299,8 +347,12 @@ function closeStageModal() {
 
 function toggleApprovalMode() {
     const type = document.getElementById('stage-type').value;
-    const group = document.getElementById('approval-mode-group');
-    group.style.display = type === 'approval' ? 'block' : 'none';
+
+    // Show approval-mode only for 'approval' type
+    document.getElementById('approval-mode-group').style.display = type === 'approval' ? 'block' : 'none';
+
+    // Show reminder/escalation for 'approval' and 'signature' types (not notification, which auto-advances)
+    document.getElementById('reminder-escalation-group').style.display = type === 'notification' ? 'none' : 'block';
 
     const mode = document.getElementById('stage-approval-mode').value;
     document.getElementById('mode-hint').textContent =
@@ -315,12 +367,17 @@ async function saveStage() {
     const name = document.getElementById('stage-name').value.trim();
     if (!name) { showToast('Stage name is required', 'error'); return; }
 
+    const reminderVal   = document.getElementById('stage-reminder-days').value.trim();
+    const escalationVal = document.getElementById('stage-escalation-days').value.trim();
+
     const payload = {
-        action:        id ? 'update' : 'create',
-        id:            id || undefined,
-        stage_name:    name,
-        stage_type:    document.getElementById('stage-type').value,
-        approval_mode: document.getElementById('stage-approval-mode').value,
+        action:          id ? 'update' : 'create',
+        id:              id || undefined,
+        stage_name:      name,
+        stage_type:      document.getElementById('stage-type').value,
+        approval_mode:   document.getElementById('stage-approval-mode').value,
+        reminder_days:   reminderVal   !== '' ? parseInt(reminderVal,   10) : '',
+        escalation_days: escalationVal !== '' ? parseInt(escalationVal, 10) : '',
     };
 
     try {

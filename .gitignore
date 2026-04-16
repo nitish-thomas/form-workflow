@@ -1,10 +1,14 @@
 # Secrets — never commit
 config.php
 
+includes/fpdf/
+includes/phpmailer/
+
 # OS cruft
 .DS_Store
 Thumbs.db
 desktop.ini
+.env
 
 # Editor
 .vscode/
@@ -25,3 +29,6 @@ docs/.trash/
 # PHP
 vendor/
 composer.lock
+
+
+
