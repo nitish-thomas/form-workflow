@@ -205,7 +205,7 @@ function statusBadge(string $status): string
         'skipped'     => ['bg-gray-100 text-gray-500',      'Skipped'],
     ];
     [$cls, $label] = $map[$status] ?? ['bg-gray-100 text-gray-500', ucfirst($status)];
-    return '<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold ' . $cls . '">' . $label . '</span>';
+    return '<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold whitespace-nowrap ' . $cls . '">' . $label . '</span>';
 }
 
 function decisionIcon(string $decision): string
@@ -250,16 +250,16 @@ if ($decisionFlash === 'approve') {
   </a>
 
   <!-- ── Header card ───────────────────────────────────────── -->
-  <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-    <div class="flex items-start justify-between gap-4">
-      <div>
+  <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-4 sm:p-6">
+    <div class="flex items-start justify-between gap-3">
+      <div class="min-w-0 flex-1">
         <p class="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1">Form</p>
-        <h1 class="text-2xl font-bold text-gray-900"><?= htmlspecialchars($form['title'] ?? $form['name'] ?? 'Unknown Form') ?></h1>
+        <h1 class="text-xl sm:text-2xl font-bold text-gray-900 break-words"><?= htmlspecialchars($form['title'] ?? $form['name'] ?? 'Unknown Form') ?></h1>
         <?php if ($form['description'] ?? ''): ?>
         <p class="text-gray-500 text-sm mt-1"><?= htmlspecialchars($form['description']) ?></p>
         <?php endif; ?>
       </div>
-      <div class="shrink-0">
+      <div class="shrink-0 mt-0.5">
         <?= statusBadge($submission['status']) ?>
       </div>
     </div>

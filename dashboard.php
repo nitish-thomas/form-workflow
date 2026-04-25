@@ -8,7 +8,8 @@
 
 require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/supabase.php';
-require_once __DIR__ . '/includes/auth-check.php'; // sets $currentUser, $sb
+require_once __DIR__ . '/includes/auth-check.php';  // sets $currentUser, $sb
+require_once __DIR__ . '/includes/view-helpers.php'; // vh_renderFormDataList()
 
 $isAdmin = ($currentUser['role'] === 'admin');
 
@@ -104,6 +105,16 @@ $submissionsThisMonth = count(array_filter(
 // Recent 10 for table
 $recentSubmissions = array_slice($allMySubmissions, 0, 10);
 
+// ── Batch load submitter display names for recent table ───────────────────────
+$recentSubmitterIds = array_values(array_filter(array_unique(array_column($recentSubmissions, 'submitted_by'))));
+$dashSubmitterNameMap = [];
+if (!empty($recentSubmitterIds)) {
+    $rows = $sb->from('users')->select('id,display_name,email')->in('id', $recentSubmitterIds)->execute() ?? [];
+    foreach ($rows as $u) {
+        $dashSubmitterNameMap[$u['id']] = $u['display_name'] ?? $u['email'] ?? null;
+    }
+}
+
 // ── Helper ────────────────────────────────────────────────────────────────────
 function dashStatusBadge(string $status): string
 {
@@ -115,7 +126,7 @@ function dashStatusBadge(string $status): string
         'cancelled'   => ['bg-gray-100 text-gray-500',     'Cancelled'],
     ];
     [$cls, $label] = $map[$status] ?? ['bg-gray-100 text-gray-500', ucfirst(str_replace('_', ' ', $status))];
-    return '<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold ' . $cls . '">' . $label . '</span>';
+    return '<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold whitespace-nowrap ' . $cls . '">' . $label . '</span>';
 }
 
 // ── Page setup ────────────────────────────────────────────────────────────────
@@ -154,8 +165,9 @@ require_once __DIR__ . '/includes/header.php';
     </a>
 
     <!-- Pending approvals -->
-    <div class="bg-white rounded-xl border p-6 transition-all
-                <?= $pendingCount > 0 ? 'border-amber-200 bg-amber-50/20' : 'border-gray-200' ?>">
+    <?php $pendingTag = $pendingCount > 0 ? 'a' : 'div'; $pendingHref = $pendingCount > 0 ? ' href="/submissions.php?status=in_progress"' : ''; ?>
+    <<?= $pendingTag . $pendingHref ?> class="<?= $pendingCount > 0 ? 'block' : '' ?> bg-white rounded-xl border p-6 transition-all
+                <?= $pendingCount > 0 ? 'border-amber-200 bg-amber-50/20 hover:shadow-md cursor-pointer group' : 'border-gray-200' ?>">
         <div class="flex items-start justify-between">
             <div>
                 <p class="text-sm font-medium text-gray-500">Pending approvals</p>
@@ -172,10 +184,10 @@ require_once __DIR__ . '/includes/header.php';
                 </svg>
             </div>
         </div>
-        <p class="mt-4 text-xs font-medium <?= $pendingCount > 0 ? 'text-amber-600' : 'text-gray-400' ?>">
+        <p class="mt-4 text-xs font-medium <?= $pendingCount > 0 ? 'text-amber-600 group-hover:underline' : 'text-gray-400' ?>">
             <?= $pendingCount > 0 ? 'Action required — see below ↓' : 'Nothing awaiting your action' ?>
         </p>
-    </div>
+    </<?= $pendingTag ?>>
 
     <!-- Approval forms -->
     <a href="/forms.php"
@@ -217,38 +229,55 @@ require_once __DIR__ . '/includes/header.php';
         <?php foreach ($pendingItems as $item):
             $sub = $item['submission'];
         ?>
-        <div class="flex items-center gap-4 px-6 py-4 hover:bg-gray-50/50 transition-colors">
+        <div class="px-6 py-4 hover:bg-gray-50/50 transition-colors">
 
-            <!-- Icon -->
-            <div class="shrink-0 w-9 h-9 rounded-lg bg-amber-50 border border-amber-100 flex items-center justify-center">
-                <svg class="w-4 h-4 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                          d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
-                </svg>
+            <div class="flex items-center gap-4">
+
+                <!-- Icon -->
+                <div class="shrink-0 w-9 h-9 rounded-lg bg-amber-50 border border-amber-100 flex items-center justify-center">
+                    <svg class="w-4 h-4 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                              d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                    </svg>
+                </div>
+
+                <!-- Details -->
+                <div class="flex-1 min-w-0">
+                    <p class="text-sm font-semibold text-gray-900 truncate">
+                        <?= htmlspecialchars($item['form_name']) ?>
+                    </p>
+                    <p class="text-xs text-gray-500 mt-0.5">
+                        Stage: <span class="font-medium text-gray-700"><?= htmlspecialchars($item['stage_name']) ?></span>
+                        &nbsp;·&nbsp;
+                        Submitted by <span class="font-medium text-gray-700"><?= htmlspecialchars($sub['submitter_email'] ?? '—') ?></span>
+                        &nbsp;·&nbsp;
+                        <?= $sub['submitted_at'] ? date('j M Y', strtotime($sub['submitted_at'])) : '—' ?>
+                    </p>
+                </div>
+
+                <!-- CTA -->
+                <a href="/status.php?id=<?= urlencode($sub['id']) ?>"
+                   class="shrink-0 inline-flex items-center gap-1.5 px-4 py-2 bg-brand-600 text-white text-sm font-medium rounded-lg hover:bg-brand-700 transition-colors">
+                    Review
+                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+                    </svg>
+                </a>
             </div>
 
-            <!-- Details -->
-            <div class="flex-1 min-w-0">
-                <p class="text-sm font-semibold text-gray-900 truncate">
-                    <?= htmlspecialchars($item['form_name']) ?>
-                </p>
-                <p class="text-xs text-gray-500 mt-0.5">
-                    Stage: <span class="font-medium text-gray-700"><?= htmlspecialchars($item['stage_name']) ?></span>
-                    &nbsp;·&nbsp;
-                    Submitted by <span class="font-medium text-gray-700"><?= htmlspecialchars($sub['submitter_email'] ?? '—') ?></span>
-                    &nbsp;·&nbsp;
-                    <?= $sub['submitted_at'] ? date('j M Y', strtotime($sub['submitted_at'])) : '—' ?>
-                </p>
-            </div>
-
-            <!-- CTA -->
-            <a href="/status.php?id=<?= urlencode($sub['id']) ?>"
-               class="shrink-0 inline-flex items-center gap-1.5 px-4 py-2 bg-brand-600 text-white text-sm font-medium rounded-lg hover:bg-brand-700 transition-colors">
-                Review
-                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
-                </svg>
-            </a>
+            <!-- Expandable form data preview -->
+            <details class="mt-2 ml-[52px] group">
+                <summary class="list-none cursor-pointer inline-flex items-center gap-1 text-xs font-medium text-brand-600 hover:text-brand-800 select-none">
+                    <svg class="w-3 h-3 transition-transform group-open:rotate-90" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M9 5l7 7-7 7"/>
+                    </svg>
+                    <span class="group-open:hidden">Show form submission</span>
+                    <span class="hidden group-open:inline">Hide form submission</span>
+                </summary>
+                <div class="mt-3 p-4 bg-gray-50 border border-gray-200 rounded-lg">
+                    <?= vh_renderFormDataList($sub['form_data'] ?? null) ?>
+                </div>
+            </details>
         </div>
         <?php endforeach; ?>
     </div>
@@ -278,39 +307,45 @@ require_once __DIR__ . '/includes/header.php';
         <table class="min-w-full divide-y divide-gray-100">
             <thead class="bg-gray-50">
                 <tr>
-                    <th class="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Form</th>
+                    <th class="px-4 sm:px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Form</th>
                     <?php if ($isAdmin): ?>
-                    <th class="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Submitter</th>
+                    <th class="hidden sm:table-cell px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Submitter</th>
                     <?php endif; ?>
-                    <th class="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Status</th>
-                    <th class="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Submitted</th>
-                    <th class="px-6 py-3"></th>
+                    <th class="px-4 sm:px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Status</th>
+                    <th class="hidden sm:table-cell px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Submitted</th>
+                    <th class="px-4 sm:px-6 py-3"></th>
                 </tr>
             </thead>
             <tbody class="bg-white divide-y divide-gray-100">
                 <?php foreach ($recentSubmissions as $sub): ?>
                 <tr class="hover:bg-gray-50/60 transition-colors">
 
-                    <td class="px-6 py-3.5">
+                    <td class="px-4 sm:px-6 py-3.5">
                         <span class="text-sm font-medium text-gray-900">
                             <?= htmlspecialchars($formMap[$sub['form_id']] ?? '—') ?>
                         </span>
                     </td>
 
                     <?php if ($isAdmin): ?>
-                    <td class="px-6 py-3.5">
-                        <span class="text-sm text-gray-600"><?= htmlspecialchars($sub['submitter_email'] ?? '—') ?></span>
-                        <?php if (!$sub['submitted_by']): ?>
-                        <span class="block text-xs text-amber-500 mt-0.5">Not registered</span>
+                    <td class="hidden sm:table-cell px-6 py-3.5">
+                        <?php
+                            $dName = $sub['submitted_by'] ? ($dashSubmitterNameMap[$sub['submitted_by']] ?? null) : null;
+                        ?>
+                        <?php if ($dName): ?>
+                            <span class="text-sm font-medium text-gray-900 block"><?= htmlspecialchars($dName) ?></span>
+                            <span class="text-xs text-gray-500"><?= htmlspecialchars($sub['submitter_email'] ?? '') ?></span>
+                        <?php else: ?>
+                            <span class="text-sm text-gray-600"><?= htmlspecialchars($sub['submitter_email'] ?? '—') ?></span>
+                            <span class="block text-xs text-amber-500 mt-0.5">Not registered</span>
                         <?php endif; ?>
                     </td>
                     <?php endif; ?>
 
-                    <td class="px-6 py-3.5">
+                    <td class="px-4 sm:px-6 py-3.5">
                         <?= dashStatusBadge($sub['status'] ?? 'pending') ?>
                     </td>
 
-                    <td class="px-6 py-3.5 whitespace-nowrap">
+                    <td class="hidden sm:table-cell px-6 py-3.5 whitespace-nowrap">
                         <span class="text-sm text-gray-600">
                             <?= $sub['submitted_at'] ? date('j M Y', strtotime($sub['submitted_at'])) : '—' ?>
                         </span>
@@ -319,7 +354,7 @@ require_once __DIR__ . '/includes/header.php';
                         </span>
                     </td>
 
-                    <td class="px-6 py-3.5 text-right">
+                    <td class="px-4 sm:px-6 py-3.5 text-right">
                         <a href="/status.php?id=<?= urlencode($sub['id']) ?>"
                            class="inline-flex items-center gap-1 text-sm font-medium text-brand-600 hover:text-brand-800 transition-colors">
                             View

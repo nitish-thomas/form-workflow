@@ -98,9 +98,10 @@ require_once __DIR__ . '/includes/header.php';
             <div class="bg-white rounded-xl border border-gray-200 p-5 hover:shadow-sm transition-shadow"
                  id="form-<?= htmlspecialchars($form['id']) ?>">
                 <div class="flex items-start justify-between">
-                    <div class="flex-1 min-w-0">
+                    <a href="/form-stages.php?form_id=<?= urlencode($form['id']) ?>"
+                       class="flex-1 min-w-0 group cursor-pointer">
                         <div class="flex items-center gap-3">
-                            <h3 class="text-base font-semibold text-gray-900 truncate">
+                            <h3 class="text-base font-semibold text-gray-900 truncate group-hover:text-brand-600 transition-colors">
                                 <?= htmlspecialchars($form['title']) ?>
                             </h3>
                             <?php
@@ -120,8 +121,11 @@ require_once __DIR__ . '/includes/header.php';
                                 </span>
                             <?php endif; ?>
                             <?php if (!empty($form['google_form_id'])): ?>
-                                <span class="px-2 py-0.5 rounded-full text-xs font-medium bg-green-50 text-green-700" title="Google Form ID: <?= htmlspecialchars($form['google_form_id']) ?>">
-                                    ⬡ Form linked
+                                <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-green-50 text-green-700" title="Google Form ID: <?= htmlspecialchars($form['google_form_id']) ?>">
+                                    <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"/>
+                                    </svg>
+                                    Form linked
                                 </span>
                             <?php else: ?>
                                 <span class="px-2 py-0.5 rounded-full text-xs font-medium bg-amber-50 text-amber-700">
@@ -135,13 +139,13 @@ require_once __DIR__ . '/includes/header.php';
                         <p class="mt-2 text-xs text-gray-400">
                             Created <?= date('j M Y', strtotime($form['created_at'])) ?>
                         </p>
-                    </div>
+                    </a>
 
                     <!-- Action buttons -->
                     <div class="flex items-center gap-1 ml-4 shrink-0">
                         <a href="/form-stages.php?form_id=<?= urlencode($form['id']) ?>"
                            class="p-2 text-gray-400 hover:text-brand-600 hover:bg-brand-50 rounded-lg transition-colors"
-                           title="Manage Stages">
+                           title="Manage Stages" aria-label="Manage stages for <?= htmlspecialchars($form['title']) ?>">
                             <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                                       d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/>
@@ -149,7 +153,7 @@ require_once __DIR__ . '/includes/header.php';
                         </a>
                         <a href="/routing-rules.php?form_id=<?= urlencode($form['id']) ?>"
                            class="p-2 text-gray-400 hover:text-amber-600 hover:bg-amber-50 rounded-lg transition-colors"
-                           title="Routing Rules">
+                           title="Routing Rules" aria-label="Routing rules for <?= htmlspecialchars($form['title']) ?>">
                             <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                                       d="M13 10V3L4 14h7v7l9-11h-7z"/>
@@ -157,7 +161,7 @@ require_once __DIR__ . '/includes/header.php';
                         </a>
                         <button onclick='openFormModal(<?= json_encode($form) ?>)'
                                 class="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
-                                title="Edit Form">
+                                title="Edit Form" aria-label="Edit <?= htmlspecialchars($form['title']) ?>">
                             <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                                       d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/>
@@ -165,7 +169,7 @@ require_once __DIR__ . '/includes/header.php';
                         </button>
                         <button onclick="deleteForm('<?= htmlspecialchars($form['id']) ?>', '<?= htmlspecialchars(addslashes($form['title'])) ?>')"
                                 class="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                                title="Delete Form">
+                                title="Delete Form" aria-label="Delete <?= htmlspecialchars($form['title']) ?>">
                             <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                                       d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>

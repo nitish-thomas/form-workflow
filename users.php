@@ -46,6 +46,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($_SERVER['HTTP_X_REQUESTED_W
                 break;
             }
 
+            case 'pre_register': {
+                $name  = trim($input['display_name'] ?? '');
+                $email = strtolower(trim($input['email'] ?? ''));
+
+                if (!$name)  throw new Exception('Name is required');
+                if (!$email) throw new Exception('Email is required');
+                if (!filter_var($email, FILTER_VALIDATE_EMAIL)) throw new Exception('Invalid email address');
+
+                // Guard: email must not already exist
+                $exists = $sb->from('users')->select('id')->eq('email', $email)->execute();
+                if (!empty($exists)) throw new Exception('A user with that email already exists');
+
+                $inserted = $sb->from('users')->insert([
+                    'auth_id'      => null,   // filled in on first OAuth login
+                    'email'        => $email,
+                    'display_name' => $name,
+                    'role'         => 'user',
+                    'is_active'    => true,
+                ]);
+                if (!$inserted || empty($inserted[0])) throw new Exception('Database insert failed');
+                echo json_encode(['ok' => true, 'user' => $inserted[0]]);
+                break;
+            }
+
             case 'set_active': {
                 $targetId  = $input['user_id'] ?? '';
                 $isActive  = !empty($input['is_active']);
@@ -62,6 +86,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($_SERVER['HTTP_X_REQUESTED_W
                 break;
             }
 
+            case 'set_escalation_manager': {
+                $targetId   = $input['user_id']             ?? '';
+                $managerId  = trim($input['manager_id']     ?? '');
+
+                if (!$targetId) throw new Exception('Missing user_id');
+                if ($targetId === $managerId) throw new Exception('A user cannot be their own escalation contact');
+
+                // Empty string → clear the field (set NULL)
+                $updateVal = $managerId ?: null;
+
+                $result = $sb->from('users')
+                    ->eq('id', $targetId)
+                    ->update(['escalation_manager_id' => $updateVal]);
+
+                if ($result === null) throw new Exception('Database update failed');
+                echo json_encode(['ok' => true, 'manager_id' => $updateVal]);
+                break;
+            }
+
             default:
                 throw new Exception('Unknown action');
         }
@@ -75,6 +118,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($_SERVER['HTTP_X_REQUESTED_W
 // ── Fetch all users ───────────────────────────────────────────────────────────
 $users = $sb->from('users')->select('*')->order('display_name', true)->execute() ?? [];
 
+// Build an ID → user map so we can look up escalation contact display names
+$userMapById = [];
+foreach ($users as $u) {
+    $userMapById[$u['id']] = $u;
+}
+
 $pageTitle  = 'Users';
 $activePage = 'users';
 require_once __DIR__ . '/includes/header.php';
@@ -85,15 +134,24 @@ require_once __DIR__ . '/includes/header.php';
     <div>
         <h1 class="text-2xl font-bold text-gray-900">Users</h1>
         <p class="mt-1 text-sm text-gray-500">
-            Everyone who has signed in via Google OAuth.
+            Everyone who has signed in or been pre-registered.
             Roles take effect immediately on next page load.
         </p>
     </div>
-    <span class="text-sm text-gray-400 font-medium"><?= count($users) ?> registered</span>
+    <div class="flex items-center gap-3">
+        <span class="text-sm text-gray-400 font-medium"><?= count($users) ?> registered</span>
+        <button onclick="openPreRegisterModal()"
+                class="inline-flex items-center gap-2 px-4 py-2.5 bg-brand-600 text-white text-sm font-medium rounded-lg hover:bg-brand-700 transition-colors shadow-sm">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
+            </svg>
+            Pre-register User
+        </button>
+    </div>
 </div>
 
 <!-- ── User list ─────────────────────────────────────────────────────────── -->
-<div class="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+<div class="bg-white rounded-xl border border-gray-200 shadow-sm overflow-x-auto">
 
     <?php if (empty($users)): ?>
     <div class="py-16 text-center">
@@ -101,7 +159,6 @@ require_once __DIR__ . '/includes/header.php';
     </div>
 
     <?php else: ?>
-    <div class="overflow-x-auto">
     <table class="min-w-full divide-y divide-gray-100">
         <thead class="bg-gray-50">
             <tr>
@@ -109,16 +166,21 @@ require_once __DIR__ . '/includes/header.php';
                 <th class="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Role</th>
                 <th class="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Status</th>
                 <th class="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Joined</th>
+                <th class="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                    Escalation Contact
+                    <span class="ml-1 text-gray-400 font-normal normal-case" title="Who gets notified when this person's approval is overdue">ⓘ</span>
+                </th>
                 <th class="px-6 py-3 text-right text-xs font-semibold text-gray-500 uppercase tracking-wider">Actions</th>
             </tr>
         </thead>
         <tbody class="divide-y divide-gray-100">
             <?php foreach ($users as $u):
-                $isSelf    = ($u['id'] === $currentUser['id']);
-                $isAdmin   = ($u['role'] === 'admin');
-                $isActive  = (bool)($u['is_active'] ?? true);
-                $initials  = strtoupper(substr($u['display_name'] ?? $u['email'] ?? '?', 0, 1));
-                $joinedAt  = $u['created_at'] ?? null;
+                $isSelf              = ($u['id'] === $currentUser['id']);
+                $isAdmin             = ($u['role'] === 'admin');
+                $isActive            = (bool)($u['is_active'] ?? true);
+                $initials            = strtoupper(substr($u['display_name'] ?? $u['email'] ?? '?', 0, 1));
+                $joinedAt            = $u['created_at'] ?? null;
+                $escalationManagerId = $u['escalation_manager_id'] ?? null;
             ?>
             <tr class="hover:bg-gray-50/50 transition-colors" id="user-row-<?= htmlspecialchars($u['id']) ?>">
 
@@ -164,11 +226,40 @@ require_once __DIR__ . '/includes/header.php';
                     </span>
                 </td>
 
-                <!-- Joined date -->
+                <!-- Joined date / pending badge -->
                 <td class="px-6 py-4 whitespace-nowrap">
-                    <span class="text-sm text-gray-500">
-                        <?= $joinedAt ? date('j M Y', strtotime($joinedAt)) : '—' ?>
-                    </span>
+                    <?php if (empty($u['auth_id'])): ?>
+                        <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-amber-50 text-amber-700 text-xs font-medium border border-amber-200">
+                            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                            </svg>
+                            Pending first login
+                        </span>
+                    <?php else: ?>
+                        <span class="text-sm text-gray-500">
+                            <?= $joinedAt ? date('j M Y', strtotime($joinedAt)) : '—' ?>
+                        </span>
+                    <?php endif; ?>
+                </td>
+
+                <!-- Escalation Contact -->
+                <td class="px-6 py-4">
+                    <?php if ($isSelf): ?>
+                    <span class="text-xs text-gray-400">—</span>
+                    <?php else: ?>
+                    <select onchange="setEscalationManager('<?= htmlspecialchars($u['id']) ?>', this.value)"
+                            class="text-sm border border-gray-200 rounded-lg px-2 py-1.5 text-gray-700 bg-white focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-brand-500 min-w-[160px]">
+                        <option value="">— None —</option>
+                        <?php foreach ($users as $opt):
+                            if ($opt['id'] === $u['id']) continue; // can't be own contact
+                            $sel = ($escalationManagerId === $opt['id']) ? 'selected' : '';
+                        ?>
+                        <option value="<?= htmlspecialchars($opt['id']) ?>" <?= $sel ?>>
+                            <?= htmlspecialchars($opt['display_name'] ?? $opt['email'] ?? '?') ?>
+                        </option>
+                        <?php endforeach; ?>
+                    </select>
+                    <?php endif; ?>
                 </td>
 
                 <!-- Actions -->
@@ -199,8 +290,19 @@ require_once __DIR__ . '/includes/header.php';
 
                         <!-- Active toggle -->
                         <button onclick="toggleActive('<?= htmlspecialchars($u['id']) ?>', <?= $isActive ? 'false' : 'true' ?>)"
-                                class="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 transition-colors">
-                            <?= $isActive ? 'Deactivate' : 'Activate' ?>
+                                class="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors
+                                       <?= $isActive ? 'border-gray-200 text-gray-600 hover:border-red-200 hover:text-red-600 hover:bg-red-50' : 'border-emerald-200 text-emerald-700 hover:bg-emerald-50' ?>">
+                            <?php if ($isActive): ?>
+                                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636"/>
+                                </svg>
+                                Deactivate
+                            <?php else: ?>
+                                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                                </svg>
+                                Activate
+                            <?php endif; ?>
                         </button>
                     </div>
                     <?php endif; ?>
@@ -210,9 +312,40 @@ require_once __DIR__ . '/includes/header.php';
             <?php endforeach; ?>
         </tbody>
     </table>
-    </div><!-- /overflow-x-auto -->
     <?php endif; ?>
 
+</div>
+
+<!-- ── Pre-register Modal ─────────────────────────────────────────────────── -->
+<div id="prereg-modal" class="fixed inset-0 z-40 hidden">
+    <div class="fixed inset-0 bg-black/40" onclick="closePreRegisterModal()"></div>
+    <div class="fixed inset-0 flex items-center justify-center p-4">
+        <div class="bg-white rounded-2xl shadow-xl w-full max-w-md relative">
+            <div class="px-6 py-5 border-b border-gray-100">
+                <h2 class="text-lg font-semibold text-gray-900">Pre-register User</h2>
+                <p class="text-sm text-gray-500 mt-0.5">Add an Aurora staff member before their first login. They will appear in all recipient dropdowns immediately.</p>
+            </div>
+            <div class="px-6 py-5 space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Full Name <span class="text-red-500">*</span></label>
+                    <input id="prereg-name" type="text" placeholder="e.g. Jane Smith"
+                           class="w-full px-3 py-2.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Aurora Email Address <span class="text-red-500">*</span></label>
+                    <input id="prereg-email" type="email" placeholder="e.g. jane.smith@auroraearlyeducation.com.au"
+                           class="w-full px-3 py-2.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none">
+                    <p class="mt-1 text-xs text-gray-400">When they sign in via Google, their account links automatically by email.</p>
+                </div>
+            </div>
+            <div class="px-6 py-4 bg-gray-50 rounded-b-2xl flex justify-end gap-3">
+                <button onclick="closePreRegisterModal()"
+                        class="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50">Cancel</button>
+                <button onclick="savePreRegister()"
+                        class="px-5 py-2 text-sm font-medium text-white bg-brand-600 rounded-lg hover:bg-brand-700">Add User</button>
+            </div>
+        </div>
+    </div>
 </div>
 
 <!-- ── Info note ─────────────────────────────────────────────────────────── -->
@@ -229,8 +362,8 @@ require_once __DIR__ . '/includes/header.php';
             <strong>User</strong> — can log in to check their own submissions and act on approval requests. Cannot access form configuration.
         </p>
         <p class="text-blue-700 mt-1.5">
-            Users appear here only after signing in for the first time. To give someone access, ask them to visit
-            <strong><?= APP_URL ?></strong> and sign in with their Google Workspace account.
+            Staff appear here after their first sign-in, or when pre-registered by an admin. Pre-registered users show a
+            <strong>Pending first login</strong> badge — it clears automatically when they sign in with their Aurora Google account.
         </p>
     </div>
 </div>
@@ -260,6 +393,42 @@ async function toggleRole(userId, newRole) {
         // Reload the row so buttons update correctly
         setTimeout(() => location.reload(), 800);
 
+    } catch (e) {
+        showToast(e.message || 'Something went wrong', 'error');
+    }
+}
+
+function openPreRegisterModal() {
+    document.getElementById('prereg-name').value = '';
+    document.getElementById('prereg-email').value = '';
+    document.getElementById('prereg-modal').classList.remove('hidden');
+    setTimeout(() => document.getElementById('prereg-name').focus(), 100);
+}
+
+function closePreRegisterModal() {
+    document.getElementById('prereg-modal').classList.add('hidden');
+}
+
+async function savePreRegister() {
+    const name  = document.getElementById('prereg-name').value.trim();
+    const email = document.getElementById('prereg-email').value.trim();
+    if (!name)  { showToast('Name is required', 'error'); return; }
+    if (!email) { showToast('Email is required', 'error'); return; }
+
+    try {
+        await api('/users.php', { action: 'pre_register', display_name: name, email });
+        showToast('User pre-registered — they will appear in recipient dropdowns immediately');
+        closePreRegisterModal();
+        setTimeout(() => location.reload(), 600);
+    } catch (e) {
+        showToast(e.message || 'Something went wrong', 'error');
+    }
+}
+
+async function setEscalationManager(userId, managerId) {
+    try {
+        await api('/users.php', { action: 'set_escalation_manager', user_id: userId, manager_id: managerId });
+        showToast(managerId ? 'Escalation contact saved' : 'Escalation contact cleared', 'success');
     } catch (e) {
         showToast(e.message || 'Something went wrong', 'error');
     }

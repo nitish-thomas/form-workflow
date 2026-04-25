@@ -19,7 +19,7 @@ require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/supabase.php';
 require_once __DIR__ . '/includes/workflow.php'; // also loads email.php
 
-$sb = new SupabaseClient(SUPABASE_URL, SUPABASE_KEY);
+$sb = new Supabase();
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SHARED: load and validate a 'sign' token
@@ -345,15 +345,21 @@ if (!isset($pageState)) {
         <div class="mt-4 pt-4 border-t border-gray-200">
           <p class="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Form data</p>
           <dl class="space-y-1.5">
-            <?php $count = 0; foreach ($submission['form_data'] as $key => $val): if ($count >= 6) break; $count++; ?>
+            <?php foreach ($submission['form_data'] as $key => $val): ?>
             <div class="flex gap-2 text-sm">
               <dt class="text-gray-500 shrink-0 w-36 truncate"><?= htmlspecialchars($key) ?></dt>
-              <dd class="text-gray-900"><?= htmlspecialchars((string)$val) ?></dd>
+              <dd class="text-gray-900 break-words">
+                <?php if (is_array($val) && isset($val['type']) && $val['type'] === 'files'): ?>
+                  <?php foreach ($val['files'] ?? [] as $f): ?>
+                    <a href="<?= htmlspecialchars($f['url'] ?? '#') ?>" target="_blank" rel="noopener" class="text-blue-600 hover:underline block"><?= htmlspecialchars($f['name'] ?? 'File') ?></a>
+                  <?php endforeach; ?>
+                  <?php if (empty($val['files'])): ?><span class="text-gray-400">(no files)</span><?php endif; ?>
+                <?php else: ?>
+                  <?= nl2br(htmlspecialchars(is_array($val) ? implode(', ', array_map(fn($v)=>is_array($v)?implode(', ',$v):(string)$v, $val)) : (string)$val)) ?>
+                <?php endif; ?>
+              </dd>
             </div>
             <?php endforeach; ?>
-            <?php if (count($submission['form_data']) > 6): ?>
-            <p class="text-xs text-gray-400">…and <?= count($submission['form_data']) - 6 ?> more fields.</p>
-            <?php endif; ?>
           </dl>
         </div>
         <?php endif; ?>

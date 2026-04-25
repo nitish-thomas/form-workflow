@@ -97,10 +97,11 @@ function navClass(string $page, string $active): string {
                     <a href="/dashboard.php"   class="<?= navClass('dashboard',   $activePage) ?>">Dashboard</a>
                     <a href="/submissions.php" class="<?= navClass('submissions', $activePage) ?>">Submissions</a>
                     <?php if (($currentUser['role'] ?? '') === 'admin'): ?>
-                    <a href="/forms.php"       class="<?= navClass('forms',       $activePage) ?>">Forms</a>
-                    <a href="/groups.php"      class="<?= navClass('groups',      $activePage) ?>">Groups</a>
-                    <a href="/delegations.php" class="<?= navClass('delegations', $activePage) ?>">Delegations</a>
-                    <a href="/users.php"       class="<?= navClass('users',       $activePage) ?>">Users</a>
+                    <a href="/forms.php"            class="<?= navClass('forms',            $activePage) ?>">Forms</a>
+                    <a href="/groups.php"           class="<?= navClass('groups',           $activePage) ?>">Groups</a>
+                    <a href="/delegations.php"      class="<?= navClass('delegations',      $activePage) ?>">Delegations</a>
+                    <a href="/stage-templates.php"  class="<?= navClass('stage-templates',  $activePage) ?>">Templates</a>
+                    <a href="/users.php"            class="<?= navClass('users',            $activePage) ?>">Users</a>
                     <?php endif; ?>
                 </div>
             </div>
@@ -109,7 +110,6 @@ function navClass(string $page, string $active): string {
             <div class="flex items-center gap-2">
                 <div class="text-right hidden lg:block">
                     <div class="text-sm font-semibold text-white leading-tight"><?= $userName ?></div>
-                    <div class="text-xs text-white/60 leading-tight"><?= htmlspecialchars($currentUser['email'] ?? '') ?></div>
                 </div>
 
                 <?php if ($avatarUrl): ?>
@@ -151,10 +151,11 @@ function navClass(string $page, string $active): string {
             <a href="/dashboard.php"   class="block px-3 py-2.5 rounded-lg text-sm font-medium text-white/90 hover:text-white hover:bg-white/10 transition-colors <?= $activePage === 'dashboard'   ? 'bg-white/20' : '' ?>">Dashboard</a>
             <a href="/submissions.php" class="block px-3 py-2.5 rounded-lg text-sm font-medium text-white/90 hover:text-white hover:bg-white/10 transition-colors <?= $activePage === 'submissions' ? 'bg-white/20' : '' ?>">Submissions</a>
             <?php if (($currentUser['role'] ?? '') === 'admin'): ?>
-            <a href="/forms.php"       class="block px-3 py-2.5 rounded-lg text-sm font-medium text-white/90 hover:text-white hover:bg-white/10 transition-colors <?= $activePage === 'forms'       ? 'bg-white/20' : '' ?>">Forms</a>
-            <a href="/groups.php"      class="block px-3 py-2.5 rounded-lg text-sm font-medium text-white/90 hover:text-white hover:bg-white/10 transition-colors <?= $activePage === 'groups'      ? 'bg-white/20' : '' ?>">Groups</a>
-            <a href="/delegations.php" class="block px-3 py-2.5 rounded-lg text-sm font-medium text-white/90 hover:text-white hover:bg-white/10 transition-colors <?= $activePage === 'delegations' ? 'bg-white/20' : '' ?>">Delegations</a>
-            <a href="/users.php"       class="block px-3 py-2.5 rounded-lg text-sm font-medium text-white/90 hover:text-white hover:bg-white/10 transition-colors <?= $activePage === 'users'       ? 'bg-white/20' : '' ?>">Users</a>
+            <a href="/forms.php"           class="block px-3 py-2.5 rounded-lg text-sm font-medium text-white/90 hover:text-white hover:bg-white/10 transition-colors <?= $activePage === 'forms'           ? 'bg-white/20' : '' ?>">Forms</a>
+            <a href="/groups.php"          class="block px-3 py-2.5 rounded-lg text-sm font-medium text-white/90 hover:text-white hover:bg-white/10 transition-colors <?= $activePage === 'groups'          ? 'bg-white/20' : '' ?>">Groups</a>
+            <a href="/delegations.php"     class="block px-3 py-2.5 rounded-lg text-sm font-medium text-white/90 hover:text-white hover:bg-white/10 transition-colors <?= $activePage === 'delegations'     ? 'bg-white/20' : '' ?>">Delegations</a>
+            <a href="/stage-templates.php" class="block px-3 py-2.5 rounded-lg text-sm font-medium text-white/90 hover:text-white hover:bg-white/10 transition-colors <?= $activePage === 'stage-templates' ? 'bg-white/20' : '' ?>">Templates</a>
+            <a href="/users.php"           class="block px-3 py-2.5 rounded-lg text-sm font-medium text-white/90 hover:text-white hover:bg-white/10 transition-colors <?= $activePage === 'users'           ? 'bg-white/20' : '' ?>">Users</a>
             <?php endif; ?>
             <div class="pt-2 mt-2 border-t border-white/10">
                 <div class="px-3 py-1 text-xs text-white/50"><?= $userName ?> · <?= htmlspecialchars($currentUser['email'] ?? '') ?></div>

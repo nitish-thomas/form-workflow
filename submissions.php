@@ -12,7 +12,8 @@
 
 require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/supabase.php';
-require_once __DIR__ . '/includes/auth-check.php'; // sets $currentUser, $sb
+require_once __DIR__ . '/includes/auth-check.php';   // sets $currentUser, $sb
+require_once __DIR__ . '/includes/view-helpers.php'; // vh_renderFormDataList()
 
 $isAdmin = ($currentUser['role'] === 'admin');
 
@@ -71,6 +72,16 @@ if (!empty($stageIds)) {
     }
 }
 
+// ── Batch load submitter display names ───────────────────────────────────────
+$submitterIds = array_values(array_filter(array_unique(array_column($submissions, 'submitted_by'))));
+$submitterNameMap = [];
+if (!empty($submitterIds)) {
+    $submitterRows = $sb->from('users')->select('id,display_name,email')->in('id', $submitterIds)->execute() ?? [];
+    foreach ($submitterRows as $u) {
+        $submitterNameMap[$u['id']] = $u['display_name'] ?? $u['email'] ?? null;
+    }
+}
+
 // ── Batch load approver decisions for visible submissions ─────────────────────
 $subIds = array_values(array_unique(array_column($submissions, 'id')));
 $allSubStageRows = [];
@@ -114,7 +125,7 @@ function submissionStatusBadge(string $status): string
         'cancelled'   => ['bg-gray-100 text-gray-500 ring-1 ring-gray-200',        'Cancelled'],
     ];
     [$cls, $label] = $map[$status] ?? ['bg-gray-100 text-gray-500', ucfirst(str_replace('_', ' ', $status))];
-    return '<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold ' . $cls . '">' . $label . '</span>';
+    return '<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold whitespace-nowrap ' . $cls . '">' . $label . '</span>';
 }
 
 function tabCount(array $counts, string $key): string
@@ -173,10 +184,11 @@ function filterUrl(string $status, string $formId = ''): string
         </a>
         <?php endforeach; ?>
 
-        <!-- Form filter (pushed to the right) -->
-        <?php if ($isAdmin && !empty($allForms)): ?>
-        <div class="ml-auto flex items-center pr-3 pb-1 shrink-0">
-            <label for="form-filter" class="text-xs text-gray-400 font-medium mr-2 whitespace-nowrap">Filter by form</label>
+        <!-- Form filter + Export (pushed to the right) -->
+        <?php if ($isAdmin): ?>
+        <div class="ml-auto flex items-center gap-2 pr-3 pb-1 shrink-0">
+            <?php if (!empty($allForms)): ?>
+            <label for="form-filter" class="text-xs text-gray-400 font-medium whitespace-nowrap">Filter by form</label>
             <select id="form-filter"
                     onchange="applyFormFilter(this.value)"
                     class="text-sm border border-gray-200 rounded-lg px-3 py-1.5 text-gray-700 bg-white focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-brand-500">
@@ -189,6 +201,21 @@ function filterUrl(string $status, string $formId = ''): string
                 <option value="<?= $fid ?>" <?= $sel ?>><?= $ftitle ?></option>
                 <?php endforeach; ?>
             </select>
+            <?php endif; ?>
+            <?php
+                $exportParams = ['status' => $filterStatus];
+                if ($filterFormId) $exportParams['form_id'] = $filterFormId;
+                $exportUrl = '/export-submissions.php?' . http_build_query($exportParams);
+            ?>
+            <a href="<?= $exportUrl ?>"
+               class="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-gray-600 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors whitespace-nowrap"
+               title="Export current view to CSV">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                          d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+                </svg>
+                Export CSV
+            </a>
         </div>
         <?php endif; ?>
     </div>
@@ -222,7 +249,10 @@ function filterUrl(string $status, string $formId = ''): string
                 </tr>
             </thead>
             <tbody class="bg-white divide-y divide-gray-100">
-                <?php foreach ($submissions as $sub):
+                <?php
+                // Total columns: Form, (Submitter — admin only), Status, Current Stage, Submitted, View = 5 or 6
+                $colspan = $isAdmin ? 6 : 5;
+                foreach ($submissions as $sub):
                     $formName    = htmlspecialchars($formMap[$sub['form_id']] ?? '—');
                     $subEmail    = htmlspecialchars($sub['submitter_email'] ?? '—');
                     $subStatus   = $sub['status'] ?? 'pending';
@@ -265,17 +295,35 @@ function filterUrl(string $status, string $formId = ''): string
                 ?>
                 <tr class="hover:bg-gray-50/60 transition-colors">
 
-                    <!-- Form name -->
+                    <!-- Form name + inline expand -->
                     <td class="px-6 py-4">
                         <span class="text-sm font-medium text-gray-900"><?= $formName ?></span>
+                        <details class="group mt-1">
+                            <summary class="list-none cursor-pointer inline-flex items-center gap-1 text-xs font-medium text-brand-600 hover:text-brand-800 select-none">
+                                <svg class="w-3 h-3 transition-transform group-open:rotate-90" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M9 5l7 7-7 7"/>
+                                </svg>
+                                <span class="group-open:hidden">Show submission</span>
+                                <span class="hidden group-open:inline">Hide submission</span>
+                            </summary>
+                            <div class="mt-2 p-3 bg-gray-50 border border-gray-200 rounded-lg">
+                                <?= vh_renderFormDataList($sub['form_data'] ?? null) ?>
+                            </div>
+                        </details>
                     </td>
 
                     <!-- Submitter (admin only) -->
                     <?php if ($isAdmin): ?>
                     <td class="px-6 py-4">
-                        <span class="text-sm text-gray-700"><?= $subEmail ?></span>
-                        <?php if (!$sub['submitted_by']): ?>
-                        <span class="block text-xs text-amber-500 mt-0.5">Not registered</span>
+                        <?php
+                            $displayName = $sub['submitted_by'] ? ($submitterNameMap[$sub['submitted_by']] ?? null) : null;
+                        ?>
+                        <?php if ($displayName): ?>
+                            <span class="text-sm font-medium text-gray-900 block"><?= htmlspecialchars($displayName) ?></span>
+                            <span class="text-xs text-gray-500"><?= $subEmail ?></span>
+                        <?php else: ?>
+                            <span class="text-sm text-gray-700"><?= $subEmail ?></span>
+                            <span class="block text-xs text-amber-500 mt-0.5">Not registered</span>
                         <?php endif; ?>
                     </td>
                     <?php endif; ?>
@@ -309,6 +357,7 @@ function filterUrl(string $status, string $formId = ''): string
                         </a>
                     </td>
                 </tr>
+
                 <?php endforeach; ?>
             </tbody>
         </table>
