@@ -25,7 +25,10 @@
  *                       → re-send approve/reject emails, update last_reminder_sent_at + reminder_count
  *   4. Escalation logic: if days_elapsed >= escalation_days AND
  *                        no 'escalation_sent' audit_log entry for this submission_stage
- *                        → email all admin users + re-notify pending approvers, log to audit_log
+ *                        → for each pending approver, look up their escalation_manager_id;
+ *                          email that contact with 'you are listed as escalation contact for X' wording.
+ *                          If no contact set for an approver → fall back to all admin users.
+ *                          Also re-notifies pending approvers. Logs to audit_log.
  */
 
 // ── Bootstrap ─────────────────────────────────────────────────────────────────
@@ -58,7 +61,7 @@ function cronLog(string $msg): void
 cronLog('=== Aurora Cron START ===');
 
 // ── Initialise Supabase client ─────────────────────────────────────────────────
-$sb = new SupabaseClient(SUPABASE_URL, SUPABASE_KEY);
+$sb = new Supabase();
 
 // ── 1. Load all pending submission_stages ─────────────────────────────────────
 $pendingStages = $sb->from('submission_stages')
@@ -221,7 +224,8 @@ foreach ($pendingStages as $ss) {
                     $form,
                     $pa['approveToken'],
                     $pa['rejectToken'],
-                    $currentCount + 1
+                    $currentCount + 1,
+                    $daysElapsed          // 8th param: days overdue
                 );
             }
 
@@ -239,18 +243,59 @@ foreach ($pendingStages as $ss) {
 
     // ── ESCALATION ────────────────────────────────────────────────────────────
     if ($escalationDays && $daysElapsed >= $escalationDays && empty($escalatedStageIds[$ssId])) {
-        cronLog("  → Escalating after {$daysElapsed} days — notifying " . count($adminRows) . " admin(s)");
 
-        foreach ($adminRows as $admin) {
-            sendEscalationEmail(
-                $admin['email'],
-                $admin['display_name'] ?? $admin['email'],
-                $submission,
-                $formStage,
-                $form,
-                $daysElapsed,
-                $pendingEmails
-            );
+        // Build a map: escalation_manager_id → [approver user rows]
+        // If an approver has no escalation contact set, they go into the fallback bucket.
+        $managerToApprovers = []; // [manager_user_id => [approver user row, ...]]
+        $fallbackApprovers  = []; // approvers with no escalation contact → email all admins
+
+        foreach ($pendingApprovers as $pa) {
+            $approverUser = $pa['user'];
+            $managerId    = $approverUser['escalation_manager_id'] ?? null;
+            if ($managerId) {
+                $managerToApprovers[$managerId][] = $approverUser;
+            } else {
+                $fallbackApprovers[] = $approverUser;
+            }
+        }
+
+        // Load any manager users not already in $userMap
+        $managerIdsNeeded = array_diff(array_keys($managerToApprovers), array_keys($userMap));
+        if (!empty($managerIdsNeeded)) {
+            $extraUsers = $sb->from('users')->select('*')->in('id', $managerIdsNeeded)->execute() ?? [];
+            foreach ($extraUsers as $eu) {
+                $userMap[$eu['id']] = $eu;
+            }
+        }
+
+        // Send to each assigned escalation contact
+        foreach ($managerToApprovers as $managerId => $approverUsers) {
+            $manager = $userMap[$managerId] ?? null;
+            if (!$manager) {
+                cronLog("  WARN: escalation contact {$managerId} not found — routing to fallback");
+                $fallbackApprovers = array_merge($fallbackApprovers, $approverUsers);
+                continue;
+            }
+            $approverList = array_map(fn($u) => [
+                'name'  => $u['display_name'] ?? $u['email'],
+                'email' => $u['email'],
+            ], $approverUsers);
+            cronLog("  → Escalation: notifying contact " . ($manager['display_name'] ?? $manager['email'])
+                  . " for " . count($approverList) . " approver(s)");
+            sendEscalationEmail($manager, $submission, $formStage, $form, $daysElapsed, $approverList, false);
+        }
+
+        // Fallback: no escalation contact set → email all admins
+        if (!empty($fallbackApprovers)) {
+            $fallbackList = array_map(fn($u) => [
+                'name'  => $u['display_name'] ?? $u['email'],
+                'email' => $u['email'],
+            ], $fallbackApprovers);
+            cronLog("  → Escalation fallback: notifying " . count($adminRows) . " admin(s) for "
+                  . count($fallbackList) . " approver(s) with no contact set");
+            foreach ($adminRows as $admin) {
+                sendEscalationEmail($admin, $submission, $formStage, $form, $daysElapsed, $fallbackList, true);
+            }
         }
 
         // Re-notify pending approvers (same as a reminder)
@@ -262,20 +307,34 @@ foreach ($pendingStages as $ss) {
                 $form,
                 $pa['approveToken'],
                 $pa['rejectToken'],
-                (int)($ss['reminder_count'] ?? 0) + 1
+                (int)($ss['reminder_count'] ?? 0) + 1,
+                $daysElapsed
             );
         }
 
         // Log to audit_log so we don't escalate again
+        $allEscalatedEmails = [];
+        foreach ($managerToApprovers as $managerId => $approverUsers) {
+            if (isset($userMap[$managerId])) {
+                $allEscalatedEmails[] = $userMap[$managerId]['email'];
+            }
+        }
+        foreach ($adminRows as $admin) {
+            if (!empty($fallbackApprovers)) {
+                $allEscalatedEmails[] = $admin['email'];
+            }
+        }
+
         $sb->from('audit_log')->insert([
             'submission_id'       => $submissionId,
             'submission_stage_id' => $ssId,
             'action'              => 'escalation_sent',
             'via'                 => 'cron',
             'meta'                => json_encode([
-                'days_elapsed'   => $daysElapsed,
-                'pending_emails' => $pendingEmails,
-                'admin_count'    => count($adminRows),
+                'days_elapsed'       => $daysElapsed,
+                'pending_emails'     => $pendingEmails,
+                'escalated_contacts' => $allEscalatedEmails,
+                'fallback_used'      => !empty($fallbackApprovers),
             ]),
         ]);
 

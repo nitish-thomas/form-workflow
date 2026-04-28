@@ -103,6 +103,18 @@ foreach ($recipients as $r) {
     }
 }
 
+// Fetch field names from the most recent submission for this form (for the field_key dropdown)
+$formFieldNames = [];
+$latestSub = $sb->from('submissions')->select('form_data')
+    ->eq('form_id', $formId)->order('created_at', false)->limit(1)->execute();
+if (!empty($latestSub) && !empty($latestSub[0]['form_data'])) {
+    $rawData = $latestSub[0]['form_data'];
+    $parsed  = is_string($rawData) ? json_decode($rawData, true) : $rawData;
+    if (is_array($parsed)) {
+        $formFieldNames = array_keys($parsed);
+    }
+}
+
 $pageTitle  = 'Recipients — ' . $stage['stage_name'];
 $activePage = 'forms';
 require_once __DIR__ . '/includes/header.php';
@@ -259,25 +271,45 @@ require_once __DIR__ . '/includes/header.php';
 <!-- ── Dynamic Field Recipients ────────────────────────── -->
 <div class="bg-white rounded-xl border border-gray-200 p-5">
     <div class="flex items-start justify-between mb-1">
-        <h2 class="text-base font-semibold text-gray-900">Dynamic Recipients (Form Field)</h2>
+        <h2 class="text-base font-semibold text-gray-900">Dynamic Recipients</h2>
         <span class="text-xs text-gray-400 mt-0.5"><?= count($fieldKeyRecipients) ?> assigned</span>
     </div>
     <p class="text-xs text-gray-500 mb-4">
-        Enter the exact name of a form field whose value is an email address.
-        At submission time, the workflow will look up that email and send the stage notification to that person.
-        <strong>The recipient must have logged into the portal at least once</strong> before the submission is processed.
+        Select the form field that contains the recipient's email address. At submission time, the system reads that field's value and sends the notification directly to that address —
+        even if they have never logged into the portal.
     </p>
 
     <!-- Add field key form -->
     <div class="flex gap-2 mb-4">
-        <input id="add-field-key-input" type="text"
-               placeholder="e.g. Manager Email"
-               class="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none">
+        <?php if (!empty($formFieldNames)): ?>
+            <select id="add-field-key-input"
+                    class="flex-1 min-w-0 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none bg-white">
+                <option value="">— Select a form field —</option>
+                <?php foreach ($formFieldNames as $fn): ?>
+                    <option value="<?= htmlspecialchars($fn) ?>"><?= htmlspecialchars($fn) ?></option>
+                <?php endforeach; ?>
+            </select>
+        <?php else: ?>
+            <input id="add-field-key-input" type="text"
+                   placeholder="e.g. Manager Email (no submissions yet)"
+                   class="flex-1 min-w-0 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none">
+        <?php endif; ?>
         <button onclick="addFieldKey()"
                 class="px-4 py-2 bg-brand-600 text-white text-sm font-medium rounded-lg hover:bg-brand-700 transition-colors shrink-0">
             Add
         </button>
     </div>
+    <?php if (!empty($formFieldNames)): ?>
+        <p class="text-xs text-emerald-600 flex items-center gap-1 mb-3">
+            <svg class="w-3.5 h-3.5 shrink-0" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/></svg>
+            <?= count($formFieldNames) ?> fields loaded from your most recent submission.
+        </p>
+    <?php else: ?>
+        <p class="text-xs text-amber-600 flex items-center gap-1 mb-3">
+            <svg class="w-3.5 h-3.5 shrink-0" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd"/></svg>
+            No submissions yet for this form. Enter the exact field name once a submission arrives.
+        </p>
+    <?php endif; ?>
 
     <!-- Field key list -->
     <div id="field-key-recipients" class="space-y-2">
@@ -343,9 +375,9 @@ async function addGroup() {
 }
 
 async function addFieldKey() {
-    const input = document.getElementById('add-field-key-input');
-    const fieldKey = input.value.trim();
-    if (!fieldKey) { showToast('Enter a field name first', 'error'); return; }
+    const el = document.getElementById('add-field-key-input');
+    const fieldKey = el.value.trim();
+    if (!fieldKey) { showToast('Please select a form field first', 'error'); return; }
 
     try {
         await api(endpoint, { action: 'add_field_key', field_key: fieldKey });

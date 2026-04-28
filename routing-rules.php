@@ -275,14 +275,14 @@ require_once __DIR__ . '/includes/header.php';
                         Add Condition
                     </button>
                     <?php if (!empty($formFieldNames)): ?>
-                        <p class="mt-2 text-xs text-gray-400">
-                            <svg class="w-3 h-3 inline mr-0.5 text-emerald-500" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/></svg>
-                            Field names are auto-suggested from your most recent submission. Click the field name input and start typing to see options.
+                        <p class="mt-2 text-xs text-emerald-600 flex items-center gap-1">
+                            <svg class="w-3.5 h-3.5 shrink-0" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/></svg>
+                            Fields loaded from your most recent submission (<?= count($formFieldNames) ?> fields available).
                         </p>
                     <?php else: ?>
-                        <p class="mt-2 text-xs text-gray-400">
-                            <svg class="w-3 h-3 inline mr-0.5 text-amber-400" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd"/></svg>
-                            No submissions yet for this form — type field names exactly as they appear in your Google Form.
+                        <p class="mt-2 text-xs text-amber-600 flex items-center gap-1">
+                            <svg class="w-3.5 h-3.5 shrink-0" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd"/></svg>
+                            No submissions yet — type field names exactly as they appear in your Google Form.
                         </p>
                     <?php endif; ?>
                 </div>
@@ -317,17 +317,10 @@ require_once __DIR__ . '/includes/header.php';
     </div>
 </div>
 
-<!-- Datalist for form field name autocomplete -->
-<datalist id="form-field-names">
-    <?php foreach ($formFieldNames as $fieldName): ?>
-        <option value="<?= htmlspecialchars($fieldName) ?>">
-    <?php endforeach; ?>
-</datalist>
-
 <script>
 const formId = '<?= htmlspecialchars($formId) ?>';
 const endpoint = '/routing-rules.php?form_id=' + formId;
-const hasFieldNames = <?= !empty($formFieldNames) ? 'true' : 'false' ?>;
+const formFieldNames = <?= json_encode($formFieldNames) ?>;
 
 const operators = [
     { value: '=',  label: 'equals' },
@@ -340,25 +333,43 @@ const operators = [
     { value: 'not_contains', label: 'does not contain' },
 ];
 
+function buildFieldSelect(selectedField) {
+    if (formFieldNames.length === 0) {
+        return `<input type="text" placeholder="Field name (no submissions yet)" value="${escHtml(selectedField)}"
+                       class="cond-field flex-1 min-w-0 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none">`;
+    }
+    const opts = [`<option value="">— Select field —</option>`]
+        .concat(formFieldNames.map(f =>
+            `<option value="${escHtml(f)}" ${f === selectedField ? 'selected' : ''}>${escHtml(f)}</option>`
+        )).join('');
+    return `<select class="cond-field flex-1 min-w-0 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none bg-white">
+                ${opts}
+            </select>`;
+}
+
 function addConditionRow(field = '', op = '=', value = '') {
     const container = document.getElementById('conditions-container');
     const row = document.createElement('div');
-    row.className = 'condition-row flex items-center gap-2';
+    row.className = 'condition-row flex flex-col gap-2';
+
     row.innerHTML = `
-        <input type="text" placeholder="Field name" value="${escHtml(field)}"
-               list="form-field-names"
-               class="cond-field flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none">
-        <select class="cond-op px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none">
-            ${operators.map(o => `<option value="${o.value}" ${o.value === op ? 'selected' : ''}>${o.label}</option>`).join('')}
-        </select>
-        <input type="text" placeholder="Value" value="${escHtml(value)}"
-               class="cond-value flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none">
-        <button onclick="this.parentElement.remove()"
-                class="p-1.5 text-gray-400 hover:text-red-500 rounded transition-colors shrink-0" title="Remove">
-            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
-            </svg>
-        </button>
+        <div class="flex gap-2 items-center">
+            ${buildFieldSelect(field)}
+            <select class="cond-op shrink-0 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none bg-white">
+                ${operators.map(o => `<option value="${o.value}" ${o.value === op ? 'selected' : ''}>${o.label}</option>`).join('')}
+            </select>
+        </div>
+        <div class="flex gap-2 items-center">
+            <input type="text" placeholder="Value" value="${escHtml(value)}"
+                   class="cond-value flex-1 min-w-0 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none">
+            <button onclick="this.closest('.condition-row').remove()"
+                    class="shrink-0 p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg border border-gray-200 hover:border-red-100 transition-colors" title="Remove condition">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                </svg>
+            </button>
+        </div>
+        <div class="border-b border-gray-100 last:border-0"></div>
     `;
     container.appendChild(row);
 }

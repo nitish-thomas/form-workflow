@@ -85,11 +85,20 @@ function _wf_resolveRecipients(string $stageId, array $formData): array
             if ($email) {
                 $rows = $sb->from('users')->select('*')->eq('email', $email)->execute();
                 if ($rows && isset($rows[0]) && $rows[0]['is_active']) {
+                    // Known registered user — use their full row
                     $resolvedUsers[$rows[0]['id']] = $rows[0];
-                }
-                // If no user found, log and skip (can't send without a users record)
-                if (!$rows || !isset($rows[0])) {
-                    error_log("[Aurora Workflow] Dynamic recipient email '$email' from field '{$r['field_key']}' not found in users table.");
+                } else {
+                    // No user record found — build a minimal stub so we can still
+                    // send the email directly to the raw address.
+                    // recipient_user_id will be NULL in approval_tokens (see migration
+                    // 2026-04-24_nullable_recipient_user_id.sql).
+                    error_log("[Aurora Workflow] Dynamic recipient '$email' (field '{$r['field_key']}') not found in users table — sending to raw email address.");
+                    $resolvedUsers['raw:' . $email] = [
+                        'id'           => null,
+                        'email'        => $email,
+                        'display_name' => $email,
+                        'is_active'    => true,
+                    ];
                 }
             }
         }
@@ -103,6 +112,12 @@ function _wf_resolveRecipients(string $stageId, array $formData): array
     $finalUsers = [];
 
     foreach ($resolvedUsers as $userId => $user) {
+        // Raw-email stubs (id = null) have no delegation records — pass through directly
+        if (empty($user['id'])) {
+            $finalUsers[$userId] = $user;
+            continue;
+        }
+
         $delegations = $sb->from('delegations')
             ->select('*')
             ->eq('delegator_id', $userId)
@@ -378,7 +393,67 @@ function wf_kickOffStage(string $submissionId, array $stage): void
         return; // Stage stays 'pending' until sign.php is submitted
     }
 
-    // ── 6. Handle approval stage ──────────────────────────────
+    // ── 6. Handle action stage ───────────────────────────────
+    // Action = send a "Mark as Done" link to each recipient.
+    // Semantics match approval_mode='any': the stage completes as soon as
+    // any one recipient marks it done.
+    if ($stage['stage_type'] === 'action') {
+        $recipients = _wf_resolveRecipients($stage['id'], $formData);
+
+        if (empty($recipients)) {
+            error_log("[Aurora Workflow] No recipients for action stage {$stage['id']} (submission $submissionId). Auto-advancing.");
+            $sb->from('submission_stages')
+                ->eq('id', $submissionStage['id'])
+                ->update(['status' => 'approved', 'completed_at' => date('c')]);
+            $sb->from('audit_log')->insert([
+                'submission_id' => $submissionId,
+                'action'        => 'stage_auto_approved',
+                'detail'        => json_encode(['stage_id' => $stage['id'], 'reason' => 'no recipients configured']),
+            ]);
+            wf_advanceSubmission($submissionId);
+            return;
+        }
+
+        $expiresAt = date('c', strtotime('+' . TOKEN_EXPIRY_HOURS . ' hours'));
+
+        foreach ($recipients as $user) {
+            $completeToken = bin2hex(random_bytes(32));
+
+            $tokenInsert = [
+                'submission_stage_id' => $submissionStage['id'],
+                'token'               => $completeToken,
+                'action'              => 'complete',
+                'expires_at'          => $expiresAt,
+            ];
+            // recipient_user_id may be null for raw-email recipients (item 4a)
+            if (!empty($user['id'])) {
+                $tokenInsert['recipient_user_id'] = $user['id'];
+            }
+
+            $sb->from('approval_tokens')->insert($tokenInsert);
+
+            sendActionRequestEmail($user, $submission, $stage, $form, $completeToken);
+
+            if (isset($user['_delegated_from'])) {
+                $original = $user['_delegated_from'];
+                $sb->from('audit_log')->insert([
+                    'submission_id' => $submissionId,
+                    'action'        => 'delegation_applied',
+                    'detail'        => json_encode([
+                        'stage_id'         => $stage['id'],
+                        'original_user_id' => $original['id'],
+                        'original_name'    => $original['display_name'] ?? $original['email'],
+                        'delegate_user_id' => $user['id'],
+                        'delegate_name'    => $user['display_name'] ?? $user['email'],
+                    ]),
+                ]);
+            }
+        }
+
+        return; // Stage stays 'pending' until action.php records completion
+    }
+
+    // ── 7. Handle approval stage ──────────────────────────────
     $recipients = _wf_resolveRecipients($stage['id'], $formData);
 
     // Safety valve: if no recipients found, auto-approve and advance
@@ -399,25 +474,28 @@ function wf_kickOffStage(string $submissionId, array $stage): void
     $expiresAt = date('c', strtotime('+' . TOKEN_EXPIRY_HOURS . ' hours'));
 
     foreach ($recipients as $user) {
-        // Create an approve token and a reject token for this user
+        // Create an approve token and a reject token for this user.
+        // recipient_user_id may be null for raw-email stubs (no users row).
         $approveToken = bin2hex(random_bytes(32)); // 64-char hex
         $rejectToken  = bin2hex(random_bytes(32));
 
-        $sb->from('approval_tokens')->insert([
+        $tokenBase = [
             'submission_stage_id' => $submissionStage['id'],
-            'recipient_user_id'   => $user['id'],
-            'token'               => $approveToken,
-            'action'              => 'approve',
             'expires_at'          => $expiresAt,
-        ]);
+        ];
+        if (!empty($user['id'])) {
+            $tokenBase['recipient_user_id'] = $user['id'];
+        }
 
-        $sb->from('approval_tokens')->insert([
-            'submission_stage_id' => $submissionStage['id'],
-            'recipient_user_id'   => $user['id'],
-            'token'               => $rejectToken,
-            'action'              => 'reject',
-            'expires_at'          => $expiresAt,
-        ]);
+        $sb->from('approval_tokens')->insert(array_merge($tokenBase, [
+            'token'  => $approveToken,
+            'action' => 'approve',
+        ]));
+
+        $sb->from('approval_tokens')->insert(array_merge($tokenBase, [
+            'token'  => $rejectToken,
+            'action' => 'reject',
+        ]));
 
         // Send the approval request email
         sendApprovalRequestEmail($user, $submission, $stage, $form, $approveToken, $rejectToken);
@@ -487,16 +565,21 @@ function wf_checkStageCompletion(string $submissionStageId): void
         if ($a['decision'] === 'rejected') $rejectedCount++;
     }
 
-    // Count total unique approvers (one 'approve' token per recipient)
+    // For action stages: use 'complete' token action; no rejection is possible
+    $isActionStage = ($stage['stage_type'] === 'action');
+    $tokenAction   = $isActionStage ? 'complete' : 'approve';
+
+    // Count total unique recipients (one action token per recipient)
     $tokenRows = $sb->from('approval_tokens')
         ->select('recipient_user_id')
         ->eq('submission_stage_id', $submissionStageId)
-        ->eq('action', 'approve')
+        ->eq('action', $tokenAction)
         ->execute();
     $totalRecipients = $tokenRows ? count($tokenRows) : 0;
 
     // ── Rejection: any rejection fails the whole submission ───
-    if ($rejectedCount > 0) {
+    // (Action stages never produce rejections, so this block is skipped for them.)
+    if ($rejectedCount > 0 && !$isActionStage) {
         $sb->from('submission_stages')
             ->eq('id', $submissionStageId)
             ->update(['status' => 'rejected', 'completed_at' => date('c')]);
@@ -523,21 +606,26 @@ function wf_checkStageCompletion(string $submissionStageId): void
         return;
     }
 
-    // ── Check stage completion based on approval_mode ─────────
+    // ── Check stage completion based on stage type / approval_mode ────────────
     $stageComplete = false;
     $approvalMode  = $stage['approval_mode'] ?? 'any';
 
-    switch ($approvalMode) {
-        case 'any':
-            $stageComplete = $approvedCount >= 1;
-            break;
-        case 'all':
-            $stageComplete = $totalRecipients > 0 && $approvedCount >= $totalRecipients;
-            break;
-        case 'quorum':
-            $quorum        = max(1, (int)($stage['quorum_count'] ?? 1));
-            $stageComplete = $approvedCount >= $quorum;
-            break;
+    if ($isActionStage) {
+        // Action stages complete as soon as any one recipient marks it done
+        $stageComplete = $approvedCount >= 1;
+    } else {
+        switch ($approvalMode) {
+            case 'any':
+                $stageComplete = $approvedCount >= 1;
+                break;
+            case 'all':
+                $stageComplete = $totalRecipients > 0 && $approvedCount >= $totalRecipients;
+                break;
+            case 'quorum':
+                $quorum        = max(1, (int)($stage['quorum_count'] ?? 1));
+                $stageComplete = $approvedCount >= $quorum;
+                break;
+        }
     }
 
     if ($stageComplete) {
@@ -608,8 +696,10 @@ function wf_advanceSubmission(string $submissionId): void
 
     if ($nextStageId) {
         $nextRows  = $sb->from('form_stages')->select('*')->eq('id', $nextStageId)->execute();
-        $nextStage = $nextRows[0] ?? null;
-        if ($nextStage) {
+        $candidate = $nextRows[0] ?? null;
+        // Only use routing-rule target if the stage is active
+        if ($candidate && ($candidate['is_active'] ?? true)) {
+            $nextStage = $candidate;
             $sb->from('audit_log')->insert([
                 'submission_id' => $submissionId,
                 'action'        => 'routing_rule_applied',
@@ -619,9 +709,10 @@ function wf_advanceSubmission(string $submissionId): void
                 ]),
             ]);
         }
+        // If target stage is inactive, fall through to sequential progression
     }
 
-    // No routing rule matched — find the next sequential stage
+    // No routing rule matched (or its target was inactive) — find the next sequential active stage
     if (!$nextStage) {
         $allStages = $sb->from('form_stages')
             ->select('*')
@@ -631,7 +722,7 @@ function wf_advanceSubmission(string $submissionId): void
 
         if ($allStages) {
             foreach ($allStages as $s) {
-                if ((int)$s['stage_order'] > $currentStageOrder) {
+                if ((int)$s['stage_order'] > $currentStageOrder && ($s['is_active'] ?? true)) {
                     $nextStage = $s;
                     break;
                 }

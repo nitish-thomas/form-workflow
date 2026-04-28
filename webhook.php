@@ -129,6 +129,34 @@ if ($userRows && isset($userRows[0])) {
     $submittedBy = $userRows[0]['id'];
 }
 
+// ── Deduplication check ───────────────────────────────────────────────────────
+// If two Apps Script triggers fire for the same form response (a common
+// misconfiguration), they will POST the exact same google_form_id +
+// submitter_email + submitted_at.  If a submission with those three values
+// already exists we return 200 immediately — the workflow was already started
+// by the first request, so no action is needed.
+$existingRows = $sb->from('submissions')
+    ->select('id, status')
+    ->eq('form_id',         $form['id'])
+    ->eq('submitter_email', $submitterEmail)
+    ->eq('submitted_at',    $submittedAt)
+    ->limit(1)
+    ->execute();
+
+if ($existingRows && isset($existingRows[0])) {
+    $existing = $existingRows[0];
+    error_log("[Aurora Webhook] Duplicate webhook ignored — submission {$existing['id']} already exists for form {$form['id']} / $submitterEmail / $submittedAt");
+    http_response_code(200);
+    header('Content-Type: application/json');
+    echo json_encode([
+        'success'       => true,
+        'submission_id' => $existing['id'],
+        'duplicate'     => true,
+        'message'       => 'Duplicate webhook call — submission already recorded',
+    ]);
+    exit;
+}
+
 // ── Create the submission record ──────────────────────────────────────────────
 $insertData = [
     'form_id'         => $form['id'],

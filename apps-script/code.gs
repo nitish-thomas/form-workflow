@@ -64,6 +64,19 @@ var WEBHOOK_URL = 'https://formworkflow.auroraearlyeducation.com.au/webhook.php'
  */
 function onFormSubmit(e) {
   try {
+    // ── Guard: handle manual runs from the editor ────────────
+    // If you click Run (▶) on onFormSubmit directly from the Script Editor,
+    // Apps Script calls this function with no event object, and e is undefined.
+    // That looks like a broken trigger but isn't — the trigger only fires when
+    // someone actually submits the form.
+    if (!e || !e.response) {
+      Logger.log('[Aurora] onFormSubmit was invoked without a form-submit event. ' +
+                 'This usually means you clicked Run (▶) from the editor. ' +
+                 'To test the webhook without submitting a form, run testWebhook() instead. ' +
+                 'To test the real flow, submit the form — the trigger will fire automatically.');
+      return;
+    }
+
     var form     = FormApp.getActiveForm();
     var response = e.response;
 
@@ -81,9 +94,47 @@ function onFormSubmit(e) {
     var itemResponses  = response.getItemResponses();
 
     for (var i = 0; i < itemResponses.length; i++) {
-      var item  = itemResponses[i];
-      var key   = item.getItem().getTitle();
-      var value = item.getResponse();
+      var item     = itemResponses[i];
+      var key      = item.getItem().getTitle();
+      var value    = item.getResponse();
+      var itemType = item.getItem().getType();
+
+      // ── File upload fields ──────────────────────────────────
+      // FILE_UPLOAD responses are JSON arrays of Google Drive file IDs.
+      // We convert each ID to a {name, url} object so the PHP portal can
+      // render clickable links instead of raw IDs.
+      if (itemType === FormApp.ItemType.FILE_UPLOAD) {
+        var fileIds = [];
+        try {
+          fileIds = JSON.parse(value);  // value is a JSON array string like '["id1","id2"]'
+        } catch (e) {
+          fileIds = Array.isArray(value) ? value : [value];
+        }
+
+        var files = [];
+        for (var j = 0; j < fileIds.length; j++) {
+          var fileId = fileIds[j];
+          try {
+            var driveFile = DriveApp.getFileById(fileId);
+            // Share with anyone in the Aurora domain who has the link
+            driveFile.setSharing(
+              DriveApp.Access.DOMAIN_WITH_LINK,
+              DriveApp.Permission.VIEW
+            );
+            files.push({
+              name: driveFile.getName(),
+              url:  'https://drive.google.com/file/d/' + fileId + '/view'
+            });
+          } catch (fileErr) {
+            Logger.log('[Aurora] Could not access Drive file ' + fileId + ': ' + fileErr.toString());
+            files.push({ name: fileId, url: 'https://drive.google.com/file/d/' + fileId + '/view' });
+          }
+        }
+
+        // Store as a structured object so PHP can detect and render as links
+        formData[key] = { type: 'files', files: files };
+        continue;
+      }
 
       // Grid questions return a 2D array — flatten to a readable string
       if (Array.isArray(value)) {

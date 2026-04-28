@@ -71,14 +71,14 @@ $avatarUrl   = $authUser['user_metadata']['avatar_url']
 // ── 5. Upsert into our users table ─────────────────────
 $sb = new Supabase();
 
-// Check if user already exists
+// Check if user already exists by auth_id
 $existing = $sb->from('users')
     ->select('id,role')
     ->eq('auth_id', $authId)
     ->execute();
 
 if ($existing && count($existing) > 0) {
-    // Update name/avatar in case they changed
+    // Returning user — refresh name/avatar in case they changed in Google
     $sb->from('users')
         ->eq('auth_id', $authId)
         ->update([
@@ -88,23 +88,54 @@ if ($existing && count($existing) > 0) {
     $userId = $existing[0]['id'];
     $role   = $existing[0]['role'];
 } else {
-    // First login — create user record
-    $inserted = $sb->from('users')->insert([
-        'auth_id'      => $authId,
-        'email'        => $email,
-        'display_name' => $displayName,
-        'avatar_url'   => $avatarUrl,
-        'role'         => 'user',   // default; promote manually in DB
-    ]);
+    // No auth_id match — check for a pre-registered user (admin added them
+    // before their first login; auth_id is NULL, matched by email address).
+    // email is UNIQUE so there can be at most one match.
+    $byEmail = $sb->from('users')
+        ->select('id,role,auth_id')
+        ->eq('email', $email)
+        ->execute();
 
-    if (!$inserted || count($inserted) === 0) {
-        http_response_code(500);
-        error_log('OAuth callback: user insert failed');
-        die('Account creation failed. Please contact an administrator.');
+    $preReg = null;
+    if ($byEmail) {
+        foreach ($byEmail as $row) {
+            if (empty($row['auth_id'])) { // auth_id IS NULL — pre-registered
+                $preReg = $row;
+                break;
+            }
+        }
     }
 
-    $userId = $inserted[0]['id'];
-    $role   = 'user';
+    if ($preReg) {
+        // Link the pre-registered stub to their real OAuth account
+        $sb->from('users')
+            ->eq('id', $preReg['id'])
+            ->update([
+                'auth_id'      => $authId,
+                'display_name' => $displayName,
+                'avatar_url'   => $avatarUrl,
+            ]);
+        $userId = $preReg['id'];
+        $role   = $preReg['role'];
+    } else {
+        // Genuine first login — create a fresh user record
+        $inserted = $sb->from('users')->insert([
+            'auth_id'      => $authId,
+            'email'        => $email,
+            'display_name' => $displayName,
+            'avatar_url'   => $avatarUrl,
+            'role'         => 'user',
+        ]);
+
+        if (!$inserted || count($inserted) === 0) {
+            http_response_code(500);
+            error_log('OAuth callback: user insert failed');
+            die('Account creation failed. Please contact an administrator.');
+        }
+
+        $userId = $inserted[0]['id'];
+        $role   = 'user';
+    }
 }
 
 // ── 6. Store session ────────────────────────────────────
