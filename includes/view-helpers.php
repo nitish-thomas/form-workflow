@@ -6,6 +6,35 @@
  * PHPMailer, or config. Pure PHP + HTML output only.
  */
 
+if (!function_exists('vh_requestRef')) {
+    /**
+     * Format a human-readable request reference from a submission + form row.
+     *
+     * Examples:
+     *   vh_requestRef($submission, $form)  →  "SFA-0001"
+     *   vh_requestRef($submission, $form)  →  "REQ-0042"
+     *
+     * Falls back gracefully if the request_number column hasn't been populated yet
+     * (e.g. old submissions before the migration ran).
+     *
+     * @param array $submission  Row from the submissions table
+     * @param array $form        Row from the forms table (needs request_prefix)
+     * @return string            Formatted reference, e.g. "SFA-0001", or empty string
+     */
+    function vh_requestRef(array $submission, array $form): string
+    {
+        $num = $submission['request_number'] ?? null;
+        if ($num === null) return '';
+        $prefix = strtoupper(trim($form['request_prefix'] ?? ''));
+        if ($prefix === '') {
+            // Derive a 3-char prefix from the form title as a last resort
+            $prefix = strtoupper(substr(preg_replace('/[^A-Za-z]/', '', $form['title'] ?? $form['name'] ?? 'REQ'), 0, 3));
+        }
+        if ($prefix === '') $prefix = 'REQ';
+        return $prefix . '-' . str_pad((string)(int)$num, 4, '0', STR_PAD_LEFT);
+    }
+}
+
 if (!function_exists('vh_normaliseFormData')) {
     /**
      * Normalise a submission's form_data column into an associative array.

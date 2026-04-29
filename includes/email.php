@@ -20,6 +20,7 @@ use PHPMailer\PHPMailer\Exception;
 require_once __DIR__ . '/phpmailer/Exception.php';
 require_once __DIR__ . '/phpmailer/PHPMailer.php';
 require_once __DIR__ . '/phpmailer/SMTP.php';
+require_once __DIR__ . '/view-helpers.php'; // vh_requestRef()
 
 // ─────────────────────────────────────────────────────────────
 // INTERNAL: create and configure a PHPMailer instance
@@ -241,12 +242,14 @@ function sendApprovalRequestEmail(
     $rejectUrl  = APP_URL . '/approve.php?token=' . urlencode($rejectToken);
     $statusUrl  = APP_URL . '/status.php?id='    . urlencode($submission['id']);
 
-    $formName     = htmlspecialchars($form['title'] ?? $form['name'] ?? 'Form'           ?? 'Form');
-    $stageName    = htmlspecialchars($stage['name']          ?? 'Stage');
+    $formName     = htmlspecialchars($form['title'] ?? $form['name'] ?? 'Form');
+    $stageName    = htmlspecialchars($stage['stage_name'] ?? $stage['name'] ?? 'Stage');
     $submitterEmail = htmlspecialchars($submission['submitter_email'] ?? 'Unknown submitter');
     $submittedAt  = date('j F Y, g:i a', strtotime($submission['submitted_at']));
     $approverName = htmlspecialchars($approver['display_name'] ?? $approver['email']);
     $expiryHours  = TOKEN_EXPIRY_HOURS;
+    $reqRef       = vh_requestRef($submission, $form ?? []);
+    $reqRefHtml   = $reqRef ? '<span style="font-family:monospace;background:#eef2ff;color:#4338ca;padding:2px 8px;border-radius:4px;font-weight:bold;">' . htmlspecialchars($reqRef) . '</span>' : '';
 
     $formDataHtml  = _formDataSection($submission['form_data'] ?? [], 'Form Submission');
     $formDataPlain = _formDataPlain($submission['form_data'] ?? []);
@@ -259,6 +262,7 @@ function sendApprovalRequestEmail(
       <table cellpadding="0" cellspacing="0" style="width:100%;background:#f9fafb;border:1px solid #e5e7eb;border-radius:6px;margin-bottom:24px;">
         <tr>
           <td style="padding:16px;">
+            ' . ($reqRef ? '<p style="margin:0 0 16px;">' . $reqRefHtml . '</p>' : '') . '
             <p style="margin:0 0 4px;font-size:11px;font-weight:bold;color:#6b7280;text-transform:uppercase;letter-spacing:.05em;">Form</p>
             <p style="margin:0 0 16px;font-size:15px;color:#111827;font-weight:bold;">' . $formName . '</p>
 
@@ -298,10 +302,11 @@ function sendApprovalRequestEmail(
     try {
         $mail = _createMailer();
         $mail->addAddress($approver['email'], $approver['display_name'] ?? '');
-        $mail->Subject = '[Action Required] ' . $formName . ' — ' . $stageName;
+        $mail->Subject = '[Action Required] ' . ($reqRef ? $reqRef . ' — ' : '') . $formName . ' — ' . $stageName;
         $mail->isHTML(true);
         $mail->Body    = $body;
-        $mail->AltBody = "Approval required for: $formName ($stageName)\n\n"
+        $mail->AltBody = ($reqRef ? "Request: $reqRef\n" : '')
+                       . "Approval required for: $formName ($stageName)\n\n"
                        . "Submitted by: $submitterEmail on $submittedAt\n"
                        . $formDataPlain . "\n"
                        . "Approve: $approveUrl\n"
@@ -327,11 +332,13 @@ function sendNotificationEmail(
     ?array $form
 ): bool {
     $statusUrl    = APP_URL . '/status.php?id=' . urlencode($submission['id']);
-    $formName     = htmlspecialchars($form['title'] ?? $form['name'] ?? 'Form'              ?? 'Form');
-    $stageName    = htmlspecialchars($stage['name']             ?? 'Stage');
+    $formName     = htmlspecialchars($form['title'] ?? $form['name'] ?? 'Form');
+    $stageName    = htmlspecialchars($stage['stage_name'] ?? $stage['name'] ?? 'Stage');
     $submitterEmail = htmlspecialchars($submission['submitter_email'] ?? 'Unknown');
     $submittedAt  = date('j F Y, g:i a', strtotime($submission['submitted_at']));
     $recipientName = htmlspecialchars($recipient['display_name'] ?? $recipient['email']);
+    $reqRef       = vh_requestRef($submission, $form ?? []);
+    $reqRefHtml   = $reqRef ? '<span style="font-family:monospace;background:#eef2ff;color:#4338ca;padding:2px 8px;border-radius:4px;font-weight:bold;">' . htmlspecialchars($reqRef) . '</span>' : '';
 
     $formDataHtml  = _formDataSection($submission['form_data'] ?? [], 'Form Submission');
     $formDataPlain = _formDataPlain($submission['form_data'] ?? []);
@@ -343,6 +350,7 @@ function sendNotificationEmail(
       <table cellpadding="0" cellspacing="0" style="width:100%;background:#f9fafb;border:1px solid #e5e7eb;border-radius:6px;margin-bottom:24px;">
         <tr>
           <td style="padding:16px;">
+            ' . ($reqRef ? '<p style="margin:0 0 16px;">' . $reqRefHtml . '</p>' : '') . '
             <p style="margin:0 0 4px;font-size:11px;font-weight:bold;color:#6b7280;text-transform:uppercase;">Form</p>
             <p style="margin:0 0 16px;font-size:15px;color:#111827;font-weight:bold;">' . $formName . '</p>
 
@@ -363,7 +371,7 @@ function sendNotificationEmail(
     try {
         $mail = _createMailer();
         $mail->addAddress($recipient['email'], $recipient['display_name'] ?? '');
-        $mail->Subject = '[FYI] ' . $formName . ' — ' . $stageName;
+        $mail->Subject = '[FYI] ' . ($reqRef ? $reqRef . ' — ' : '') . $formName . ' — ' . $stageName;
         $mail->isHTML(true);
         $mail->Body    = $body;
         $mail->AltBody = "Notification: $formName ($stageName)\nSubmitted by $submitterEmail on $submittedAt\n"
@@ -392,8 +400,10 @@ function sendSubmissionOutcomeEmail(
     if (!$toEmail) return false;
 
     $statusUrl    = APP_URL . '/status.php?id=' . urlencode($submission['id']);
-    $formName     = htmlspecialchars($form['title'] ?? $form['name'] ?? 'Form' ?? 'Form');
+    $formName     = htmlspecialchars($form['title'] ?? $form['name'] ?? 'Form');
     $completedAt  = date('j F Y, g:i a');
+    $reqRef       = vh_requestRef($submission, $form ?? []);
+    $reqRefHtml   = $reqRef ? '<span style="font-family:monospace;background:#eef2ff;color:#4338ca;padding:2px 8px;border-radius:4px;font-weight:bold;">' . htmlspecialchars($reqRef) . '</span>' : '';
 
     $isApproved   = ($outcome === 'approved');
     $outcomeLabel = $isApproved ? 'Approved' : 'Rejected';
@@ -416,6 +426,7 @@ function sendSubmissionOutcomeEmail(
       <table cellpadding="0" cellspacing="0" style="width:100%;background:#f9fafb;border:1px solid #e5e7eb;border-radius:6px;margin-bottom:24px;">
         <tr>
           <td style="padding:16px;">
+            ' . ($reqRef ? '<p style="margin:0 0 16px;">' . $reqRefHtml . '</p>' : '') . '
             <p style="margin:0 0 4px;font-size:11px;font-weight:bold;color:#6b7280;text-transform:uppercase;">Form</p>
             <p style="margin:0 0 16px;font-size:15px;color:#111827;font-weight:bold;">' . $formName . '</p>
 
@@ -433,7 +444,7 @@ function sendSubmissionOutcomeEmail(
     try {
         $mail = _createMailer();
         $mail->addAddress($toEmail);
-        $mail->Subject = '[Aurora Form Workflow] Your submission has been ' . strtolower($outcomeLabel) . ' — ' . $formName;
+        $mail->Subject = '[Aurora Form Workflow] ' . ($reqRef ? $reqRef . ' ' : '') . 'Your submission has been ' . strtolower($outcomeLabel) . ' — ' . $formName;
         $mail->isHTML(true);
         $mail->Body    = $body;
         $mail->AltBody = "Your $formName submission has been $outcomeLabel.\n$outcomeMsg\n"
@@ -474,6 +485,8 @@ function sendActionRequestEmail(
     $recipientName  = htmlspecialchars($recipient['display_name'] ?? $recipient['email']);
     $stageDesc      = htmlspecialchars($stage['description'] ?? '');
     $expiryHours    = TOKEN_EXPIRY_HOURS;
+    $reqRef         = vh_requestRef($submission, $form ?? []);
+    $reqRefHtml     = $reqRef ? '<span style="font-family:monospace;background:#eef2ff;color:#4338ca;padding:2px 8px;border-radius:4px;font-weight:bold;">' . htmlspecialchars($reqRef) . '</span>' : '';
 
     $formDataHtml  = _formDataSection($submission['form_data'] ?? [], 'Form Submission');
     $formDataPlain = _formDataPlain($submission['form_data'] ?? []);
@@ -485,6 +498,7 @@ function sendActionRequestEmail(
       <table cellpadding="0" cellspacing="0" style="width:100%;background:#fff7ed;border:1px solid #fed7aa;border-radius:6px;margin-bottom:24px;">
         <tr>
           <td style="padding:16px;">
+            ' . ($reqRef ? '<p style="margin:0 0 16px;">' . $reqRefHtml . '</p>' : '') . '
             <p style="margin:0 0 4px;font-size:11px;font-weight:bold;color:#6b7280;text-transform:uppercase;letter-spacing:.05em;">Form</p>
             <p style="margin:0 0 16px;font-size:15px;color:#111827;font-weight:bold;">' . $formName . '</p>
 
@@ -505,7 +519,7 @@ function sendActionRequestEmail(
       ' . $formDataHtml . '
 
       <p style="margin:0 0 16px;font-size:14px;color:#374151;">Once you have completed the task, click the button below to notify the system and continue the workflow.</p>
-      <a href="' . $actionUrl . '" style="display:inline-block;background:#ea580c;color:#ffffff;font-size:14px;font-weight:bold;padding:12px 28px;border-radius:6px;text-decoration:none;">✓ Mark as Done</a>
+      <a href="' . $actionUrl . '" style="display:inline-block;background:#ea580c;color:#ffffff;font-size:14px;font-weight:bold;padding:12px 28px;border-radius:6px;text-decoration:none;">✓ Mark as Actioned</a>
 
       <p style="margin:24px 0 0;font-size:12px;color:#9ca3af;">
         This link expires in ' . $expiryHours . ' hours.<br>
@@ -516,13 +530,14 @@ function sendActionRequestEmail(
     try {
         $mail = _createMailer();
         $mail->addAddress($recipient['email'], $recipient['display_name'] ?? '');
-        $mail->Subject = '[Action Required] ' . $formName . ' — ' . $stageName;
+        $mail->Subject = '[Action Required] ' . ($reqRef ? $reqRef . ' — ' : '') . $formName . ' — ' . $stageName;
         $mail->isHTML(true);
         $mail->Body    = $body;
-        $mail->AltBody = "Action required: $formName ($stageName)\n\n"
+        $mail->AltBody = ($reqRef ? "Request: $reqRef\n" : '')
+                       . "Action required: $formName ($stageName)\n\n"
                        . "Submitted by: $submitterEmail on $submittedAt\n"
                        . $formDataPlain . "\n"
-                       . "Mark as done: $actionUrl\n\n"
+                       . "Mark as actioned: $actionUrl\n\n"
                        . "This link expires in {$expiryHours} hours.";
         $mail->send();
         return true;

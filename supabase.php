@@ -174,15 +174,26 @@ class Supabase
 
     /**
      * Build the Supabase OAuth redirect URL for Google sign-in (PKCE flow).
-     * Stores the code_verifier in $_SESSION so auth-callback.php can use it.
+     * Stores the code_verifier in $_SESSION and a short-lived cookie so
+     * auth-callback.php can use it even if the session fails to persist
+     * across the OAuth redirect (a known issue on some shared hosts).
      */
     public static function getGoogleOAuthURL(): string
     {
         $codeVerifier  = self::generateCodeVerifier();
         $codeChallenge = self::generateCodeChallenge($codeVerifier);
 
-        // Store verifier in session — needed when exchanging the code
+        // Primary: store in session
         $_SESSION['pkce_code_verifier'] = $codeVerifier;
+
+        // Fallback: also set a short-lived cookie (5 min is enough for any OAuth round-trip)
+        setcookie('pkce_cv', $codeVerifier, [
+            'expires'  => time() + 300,
+            'path'     => '/',
+            'secure'   => true,
+            'httponly' => true,
+            'samesite' => 'Lax',
+        ]);
 
         $redirectTo = APP_URL . '/auth-callback.php';
 
@@ -281,7 +292,13 @@ class Supabase
         }
 
         if ($httpCode >= 200 && $httpCode < 300) {
-            return json_decode($response, true) ?? [];
+            $decoded = json_decode($response, true);
+            // Supabase RPC functions that return a scalar (int, string, bool)
+            // decode to a non-array value.  Wrap it so callers always get ?array.
+            if (!is_array($decoded)) {
+                return $decoded === null ? [] : [['result' => $decoded]];
+            }
+            return $decoded;
         }
 
         error_log("Supabase API error ($method $url) [$httpCode]: $response");

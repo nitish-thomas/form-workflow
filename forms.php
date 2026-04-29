@@ -18,6 +18,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($_SERVER['HTTP_X_REQUESTED_W
             case 'create':
                 $title = trim($input['title'] ?? '');
                 if (!$title) throw new Exception('Title is required');
+                // Auto-derive prefix from title if not supplied
+                $prefix = strtoupper(trim($input['request_prefix'] ?? ''));
+                if (!$prefix) {
+                    $prefix = strtoupper(substr(preg_replace('/[^A-Za-z]/', '', $title), 0, 5));
+                }
                 $result = $sb->from('forms')->insert([
                     'title'          => $title,
                     'description'    => trim($input['description'] ?? ''),
@@ -25,27 +30,40 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($_SERVER['HTTP_X_REQUESTED_W
                     'allow_resubmit' => !empty($input['allow_resubmit']),
                     'status'         => $input['status'] ?? 'draft',
                     'google_form_id' => trim($input['google_form_id'] ?? '') ?: null,
+                    'request_prefix' => $prefix,
                 ]);
                 if (!$result || empty($result[0])) throw new Exception('Database insert failed — check that all migrations have been run in Supabase.');
                 echo json_encode(['ok' => true, 'form' => $result[0]]);
                 break;
 
             case 'update':
+                $updateData = [
+                    'title'          => trim($input['title'] ?? ''),
+                    'description'    => trim($input['description'] ?? ''),
+                    'allow_resubmit' => !empty($input['allow_resubmit']),
+                    'status'         => $input['status'] ?? 'draft',
+                    'google_form_id' => trim($input['google_form_id'] ?? '') ?: null,
+                ];
+                // Only update prefix if explicitly sent (allows clearing to empty string)
+                if (array_key_exists('request_prefix', $input)) {
+                    $updateData['request_prefix'] = strtoupper(trim($input['request_prefix'] ?? ''));
+                }
                 $result = $sb->from('forms')
                     ->eq('id', $input['id'])
-                    ->update([
-                        'title'          => trim($input['title'] ?? ''),
-                        'description'    => trim($input['description'] ?? ''),
-                        'allow_resubmit' => !empty($input['allow_resubmit']),
-                        'status'         => $input['status'] ?? 'draft',
-                        'google_form_id' => trim($input['google_form_id'] ?? '') ?: null,
-                    ]);
+                    ->update($updateData);
                 if (!$result || empty($result[0])) throw new Exception('Database update failed — check that all migrations have been run in Supabase.');
                 echo json_encode(['ok' => true, 'form' => $result[0]]);
                 break;
 
             case 'delete':
-                $sb->from('forms')->eq('id', $input['id'])->delete();
+                $deleteResult = $sb->from('forms')->eq('id', $input['id'])->delete();
+                // delete() returns null on a Supabase/cURL error (FK violation, RLS block, etc.)
+                // A successful delete with Prefer:return=representation returns [] (empty array)
+                // when no rows matched, or the deleted row(s) when rows were found.
+                // We treat null as a hard failure; [] could mean the id didn't exist (still ok).
+                if ($deleteResult === null) {
+                    throw new Exception('Delete failed — the form may have submissions that could not be removed. Run the 2026-04-29_submissions_fk_cascade.sql migration in Supabase first.');
+                }
                 echo json_encode(['ok' => true]);
                 break;
 
@@ -212,6 +230,13 @@ require_once __DIR__ . '/includes/header.php';
                     <p class="mt-1 text-xs text-gray-400">Found in the Google Form URL between <code>/d/</code> and <code>/edit</code>. Paste the full URL and the ID will be extracted automatically.</p>
                 </div>
 
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Request Number Prefix</label>
+                    <input id="form-prefix" type="text" placeholder="e.g. SFA" maxlength="5"
+                           class="w-full px-3 py-2.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none font-mono uppercase">
+                    <p class="mt-1 text-xs text-gray-400">Short code used in request numbers (e.g. <span class="font-mono">SFA-0001</span>). Max 5 characters. Leave blank to auto-generate from the form title.</p>
+                </div>
+
                 <div class="grid grid-cols-2 gap-4">
                     <div>
                         <label class="block text-sm font-medium text-gray-700 mb-1">Status</label>
@@ -256,6 +281,7 @@ function openFormModal(form = null) {
         document.getElementById('form-status').value = form.status || 'draft';
         document.getElementById('form-resubmit').checked = !!form.allow_resubmit;
         document.getElementById('form-google-id').value = form.google_form_id || '';
+        document.getElementById('form-prefix').value = form.request_prefix || '';
     } else {
         document.getElementById('modal-title').textContent = 'New Form';
         document.getElementById('form-id').value = '';
@@ -264,6 +290,7 @@ function openFormModal(form = null) {
         document.getElementById('form-status').value = 'draft';
         document.getElementById('form-resubmit').checked = false;
         document.getElementById('form-google-id').value = '';
+        document.getElementById('form-prefix').value = '';
     }
     setTimeout(() => document.getElementById('form-title').focus(), 100);
 }
@@ -289,10 +316,11 @@ async function saveForm() {
         action:         id ? 'update' : 'create',
         id:             id || undefined,
         title:          title,
-        description:    document.getElementById('form-desc').value.trim(),
-        status:         document.getElementById('form-status').value,
-        allow_resubmit: document.getElementById('form-resubmit').checked,
-        google_form_id: document.getElementById('form-google-id').value.trim() || null,
+        description:      document.getElementById('form-desc').value.trim(),
+        status:           document.getElementById('form-status').value,
+        allow_resubmit:   document.getElementById('form-resubmit').checked,
+        google_form_id:   document.getElementById('form-google-id').value.trim() || null,
+        request_prefix:   document.getElementById('form-prefix').value.trim().toUpperCase().slice(0, 5) || null,
     };
 
     try {

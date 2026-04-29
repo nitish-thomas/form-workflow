@@ -17,7 +17,8 @@
 
 require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/supabase.php';
-require_once __DIR__ . '/includes/workflow.php'; // also loads email.php
+require_once __DIR__ . '/includes/workflow.php';    // also loads email.php
+require_once __DIR__ . '/includes/view-helpers.php'; // vh_requestRef()
 
 $sb = new Supabase(SUPABASE_SECRET_KEY);
 
@@ -267,6 +268,13 @@ $actionIcon   = $isApprove ? '✓'        : '✗';
 
       <!-- Submission summary card -->
       <div class="bg-gray-50 rounded-lg border border-gray-200 p-5 mb-6">
+        <?php $approveReqRef = vh_requestRef($submission, $form ?? []); ?>
+        <?php if ($approveReqRef): ?>
+        <div class="flex items-center gap-2 mb-3 pb-3 border-b border-gray-200">
+          <span class="text-xs font-semibold text-gray-400 uppercase tracking-wide">Request</span>
+          <span class="font-mono font-bold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded text-sm"><?= htmlspecialchars($approveReqRef) ?></span>
+        </div>
+        <?php endif; ?>
         <div class="grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
           <div>
             <p class="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-0.5">Form</p>

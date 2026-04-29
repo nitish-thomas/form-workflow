@@ -12,8 +12,9 @@
 
 require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/supabase.php';
-require_once __DIR__ . '/includes/auth-check.php'; // sets $currentUser, $sb
-require_once __DIR__ . '/includes/workflow.php';  // wf_checkStageCompletion()
+require_once __DIR__ . '/includes/auth-check.php';   // sets $currentUser, $sb
+require_once __DIR__ . '/includes/workflow.php';    // wf_checkStageCompletion()
+require_once __DIR__ . '/includes/view-helpers.php'; // vh_requestRef()
 
 $submissionId = trim($_GET['id'] ?? '');
 
@@ -225,7 +226,8 @@ if (is_string($formData)) {
 }
 
 // ── Page setup ────────────────────────────────────────────────────────────────
-$pageTitle  = 'Submission — ' . ($form['title'] ?? $form['name'] ?? 'Unknown Form');
+$_reqRefForTitle = vh_requestRef($submission, $form ?? []);
+$pageTitle  = ($_reqRefForTitle ? $_reqRefForTitle . ' — ' : 'Submission — ') . ($form['title'] ?? $form['name'] ?? 'Unknown Form');
 $activePage = '';
 
 // Toast to show after inline approval redirect
@@ -259,8 +261,11 @@ if ($decisionFlash === 'approve') {
         <p class="text-gray-500 text-sm mt-1"><?= htmlspecialchars($form['description']) ?></p>
         <?php endif; ?>
       </div>
-      <div class="shrink-0 mt-0.5">
+      <div class="shrink-0 mt-0.5 flex flex-col items-end gap-2">
         <?= statusBadge($submission['status']) ?>
+        <?php $reqRef = vh_requestRef($submission, $form ?? []); if ($reqRef): ?>
+        <span class="inline-flex items-center px-2.5 py-1 rounded-lg text-sm font-bold bg-indigo-50 text-indigo-700 ring-1 ring-indigo-100 font-mono"><?= htmlspecialchars($reqRef) ?></span>
+        <?php endif; ?>
       </div>
     </div>
 
@@ -281,8 +286,12 @@ if ($decisionFlash === 'approve') {
         <dd class="text-gray-900"><?= $submission['completed_at'] ? date('j M Y, g:i a', strtotime($submission['completed_at'])) : '—' ?></dd>
       </div>
       <div>
-        <dt class="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-0.5">Submission ID</dt>
+        <dt class="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-0.5">Request Ref</dt>
+        <?php if ($reqRef): ?>
+        <dd class="text-gray-900 font-mono font-semibold"><?= htmlspecialchars($reqRef) ?></dd>
+        <?php else: ?>
         <dd class="text-gray-400 font-mono text-xs"><?= htmlspecialchars(substr($submissionId, 0, 8)) ?>…</dd>
+        <?php endif; ?>
       </div>
     </dl>
   </div>

@@ -103,16 +103,34 @@ foreach ($recipients as $r) {
     }
 }
 
-// Fetch field names from the most recent submission for this form (for the field_key dropdown)
+// Fetch field names from recent submissions for this form (for the field_key dropdown).
+// We select all columns (not just form_data) to avoid edge cases with single-column
+// JSONB selects via the Supabase REST wrapper. We try up to 5 recent submissions so
+// that a single empty/corrupt form_data row doesn't block the dropdown.
 $formFieldNames = [];
-$latestSub = $sb->from('submissions')->select('form_data')
-    ->eq('form_id', $formId)->order('created_at', false)->limit(1)->execute();
-if (!empty($latestSub) && !empty($latestSub[0]['form_data'])) {
-    $rawData = $latestSub[0]['form_data'];
-    $parsed  = is_string($rawData) ? json_decode($rawData, true) : $rawData;
-    if (is_array($parsed)) {
-        $formFieldNames = array_keys($parsed);
+$recentSubs = $sb->from('submissions')
+    ->select('*')
+    ->eq('form_id', $formId)
+    ->order('created_at', false)
+    ->limit(5)
+    ->execute();
+
+if (!empty($recentSubs)) {
+    foreach ($recentSubs as $sub) {
+        $rawData = $sub['form_data'] ?? null;
+        if (empty($rawData)) continue;
+        $parsed = is_string($rawData) ? json_decode($rawData, true) : $rawData;
+        if (is_array($parsed) && !empty($parsed)) {
+            // Filter out internal keys that are not real form fields
+            $keys = array_filter(array_keys($parsed), fn($k) => is_string($k) && trim($k) !== '');
+            if (!empty($keys)) {
+                $formFieldNames = array_values($keys);
+                break; // found a good submission — stop looking
+            }
+        }
     }
+} else {
+    error_log("[Aurora] recipients.php: no submissions found for form_id={$formId} — dropdown will show text input fallback");
 }
 
 $pageTitle  = 'Recipients — ' . $stage['stage_name'];
@@ -291,7 +309,7 @@ require_once __DIR__ . '/includes/header.php';
             </select>
         <?php else: ?>
             <input id="add-field-key-input" type="text"
-                   placeholder="e.g. Manager Email (no submissions yet)"
+                   placeholder="e.g. Manager Email"
                    class="flex-1 min-w-0 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none">
         <?php endif; ?>
         <button onclick="addFieldKey()"
@@ -307,7 +325,7 @@ require_once __DIR__ . '/includes/header.php';
     <?php else: ?>
         <p class="text-xs text-amber-600 flex items-center gap-1 mb-3">
             <svg class="w-3.5 h-3.5 shrink-0" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd"/></svg>
-            No submissions yet for this form. Enter the exact field name once a submission arrives.
+            No field names could be loaded. Enter the exact field name as it appears in your Google Form.
         </p>
     <?php endif; ?>
 

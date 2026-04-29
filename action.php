@@ -15,7 +15,8 @@
 
 require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/supabase.php';
-require_once __DIR__ . '/includes/workflow.php'; // also loads email.php
+require_once __DIR__ . '/includes/workflow.php';    // also loads email.php
+require_once __DIR__ . '/includes/view-helpers.php'; // vh_requestRef()
 
 $sb = new Supabase(SUPABASE_SECRET_KEY);
 
@@ -185,7 +186,7 @@ if (!isset($pageState)) {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Aurora Form Workflow — Mark as Done</title>
+  <title>Aurora Form Workflow — Mark as Actioned</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
     body { font-family: 'Inter', system-ui, sans-serif; }
@@ -223,6 +224,13 @@ if (!isset($pageState)) {
 
       <!-- Submission summary -->
       <div class="bg-orange-50 rounded-lg border border-orange-200 p-5 mb-6">
+        <?php $actionReqRef = vh_requestRef($submission, $form ?? []); ?>
+        <?php if ($actionReqRef): ?>
+        <div class="flex items-center gap-2 mb-3 pb-3 border-b border-orange-200">
+          <span class="text-xs font-semibold text-gray-400 uppercase tracking-wide">Request</span>
+          <span class="font-mono font-bold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded text-sm"><?= htmlspecialchars($actionReqRef) ?></span>
+        </div>
+        <?php endif; ?>
         <div class="grid grid-cols-2 gap-x-4 gap-y-3 text-sm mb-4">
           <div>
             <p class="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-0.5">Form</p>
@@ -294,7 +302,7 @@ if (!isset($pageState)) {
             type="submit"
             class="flex-1 bg-orange-600 hover:bg-orange-700 text-white font-semibold py-3 rounded-lg text-sm transition-colors"
           >
-            ✓ Mark as Done
+            ✓ Mark as Actioned
           </button>
           <a
             href="<?= APP_URL . '/status.php?id=' . urlencode($submission['id']) ?>"

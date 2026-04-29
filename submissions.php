@@ -27,9 +27,11 @@ if (!in_array($filterStatus, $validStatuses)) $filterStatus = 'all';
 
 // ── Load all forms for the filter dropdown ────────────────────────────────────
 $allForms = $sb->from('forms')->select('*')->order('created_at', false)->execute() ?? [];
-$formMap  = [];
+$formMap  = [];     // id => title string  (used for the filter dropdown label)
+$formRowMap = [];   // id => full form row (used for request_prefix in vh_requestRef)
 foreach ($allForms as $f) {
-    $formMap[$f['id']] = $f['title'] ?? $f['name'] ?? '—';
+    $formMap[$f['id']]    = $f['title'] ?? $f['name'] ?? '—';
+    $formRowMap[$f['id']] = $f;
 }
 
 // ── Fetch submissions (admin/non-admin + form filter, NOT status filter yet) ──
@@ -292,12 +294,21 @@ function filterUrl(string $status, string $formId = ''): string
                     // Relative date
                     $dateDisplay = $submittedAt ? date('j M Y', strtotime($submittedAt)) : '—';
                     $timeDisplay = $submittedAt ? date('g:i a', strtotime($submittedAt)) : '';
+
+                    // Request reference
+                    $formRow = $formRowMap[$sub['form_id']] ?? [];
+                    $reqRef  = vh_requestRef($sub, $formRow);
                 ?>
                 <tr class="hover:bg-gray-50/60 transition-colors">
 
                     <!-- Form name + inline expand -->
                     <td class="px-6 py-4">
-                        <span class="text-sm font-medium text-gray-900"><?= $formName ?></span>
+                        <div class="flex items-center gap-2 flex-wrap">
+                            <span class="text-sm font-medium text-gray-900"><?= $formName ?></span>
+                            <?php if ($reqRef): ?>
+                            <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-indigo-50 text-indigo-700 ring-1 ring-indigo-100 font-mono whitespace-nowrap"><?= htmlspecialchars($reqRef) ?></span>
+                            <?php endif; ?>
+                        </div>
                         <details class="group mt-1">
                             <summary class="list-none cursor-pointer inline-flex items-center gap-1 text-xs font-medium text-brand-600 hover:text-brand-800 select-none">
                                 <svg class="w-3 h-3 transition-transform group-open:rotate-90" fill="none" stroke="currentColor" viewBox="0 0 24 24">

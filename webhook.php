@@ -33,7 +33,7 @@
 
 require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/supabase.php';
-require_once __DIR__ . '/includes/workflow.php'; // also loads email.php
+require_once __DIR__ . '/includes/workflow.php'; // also loads email.php;
 
 // Initialise Supabase with the secret (service role) key so we can write rows
 $sb = new Supabase(SUPABASE_SECRET_KEY);
@@ -157,14 +157,34 @@ if ($existingRows && isset($existingRows[0])) {
     exit;
 }
 
+// ── Assign the next request number for this form (atomic increment) ──────────
+// Uses a Postgres function to bump the counter and return the new value,
+// avoiding any race condition on concurrent submissions.
+$requestNumber = null;
+$counterResult = $sb->rpc('increment_form_counter', ['p_form_id' => $form['id']]);
+if ($counterResult !== null) {
+    // rpc() returns an array; the function returns a scalar so it comes back as
+    // [['increment_form_counter' => 3]] or similar depending on Supabase version.
+    // Handle both shapes gracefully.
+    if (isset($counterResult[0]['increment_form_counter'])) {
+        $requestNumber = (int) $counterResult[0]['increment_form_counter'];
+    } elseif (isset($counterResult[0]) && is_numeric(array_values($counterResult[0])[0] ?? null)) {
+        $requestNumber = (int) array_values($counterResult[0])[0];
+    }
+}
+if ($requestNumber === null) {
+    error_log("[Aurora Webhook] increment_form_counter returned unexpected shape for form {$form['id']}: " . json_encode($counterResult));
+}
+
 // ── Create the submission record ──────────────────────────────────────────────
 $insertData = [
     'form_id'         => $form['id'],
     'submitted_by'    => $submittedBy,   // null if not in users table — that's fine
     'submitter_email' => $submitterEmail,
-    'form_data'       => json_encode($formData),
+    'form_data'       => $formData,
     'status'          => 'in_progress',
     'submitted_at'    => $submittedAt,
+    'request_number'  => $requestNumber,
 ];
 
 $submissionRows = $sb->from('submissions')->insert($insertData);
